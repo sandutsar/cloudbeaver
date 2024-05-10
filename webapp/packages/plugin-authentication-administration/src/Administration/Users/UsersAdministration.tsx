@@ -1,52 +1,49 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
-import { AdministrationItemContentComponent, ADMINISTRATION_TOOLS_PANEL_STYLES } from '@cloudbeaver/core-administration';
-import { ToolsPanel } from '@cloudbeaver/core-blocks';
+import type { AdministrationItemContentComponent } from '@cloudbeaver/core-administration';
+import { s, SContext, StyleRegistry, ToolsPanel, useS, useTranslate } from '@cloudbeaver/core-blocks';
 import { useService } from '@cloudbeaver/core-di';
-import { useTranslate } from '@cloudbeaver/core-localization';
-import { useStyles } from '@cloudbeaver/core-theming';
-import { BASE_TAB_STYLES, ITabData, Tab, TabList, TabPanel, TabsState, UNDERLINE_TAB_STYLES } from '@cloudbeaver/core-ui';
+import {
+  ITabData,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanelStyles,
+  TabsState,
+  TabStyles,
+  TabTitle,
+  TabTitleStyles,
+  TabUnderlineStyleRegistry,
+} from '@cloudbeaver/core-ui';
 
-import { MetaParameters } from './MetaParameters/MetaParameters';
-import { RolesPage } from './Roles/RolesPage';
+import style from './shared/UsersAdministration.m.css';
+import tabStyle from './shared/UsersAdministrationTab.m.css';
+import tabPanelStyle from './shared/UsersAdministrationTabPanel.m.css';
+import TabTitleModuleStyles from './shared/UsersAdministrationTabTitle.m.css';
+import { TeamsPage } from './Teams/TeamsPage';
 import { EUsersAdministrationSub, UsersAdministrationNavigationService } from './UsersAdministrationNavigationService';
-import { UsersTable } from './UsersTable/UsersTable';
+import { UsersPage } from './UsersTable/UsersPage';
 
-const tabsStyles = css`
-  TabList {
-    position: relative;
-    flex-shrink: 0;
-    align-items: center;
-    height: 51px;
-  }
-  Tab {
-    height: 46px!important;
-    text-transform: uppercase;
-    font-weight: 500 !important;
-  }
-  TabPanel {
-    flex-direction: column;
-  }
-`;
+const tabPanelRegistry: StyleRegistry = [[TabPanelStyles, { mode: 'append', styles: [tabPanelStyle] }]];
 
-export const UsersAdministration: AdministrationItemContentComponent = observer(function UsersAdministration({
-  sub, param,
-}) {
+const mainTabsRegistry: StyleRegistry = [
+  ...TabUnderlineStyleRegistry,
+  [TabStyles, { mode: 'append', styles: [tabStyle] }],
+  [TabTitleStyles, { mode: 'append', styles: [TabTitleModuleStyles] }],
+];
+
+export const UsersAdministration: AdministrationItemContentComponent = observer(function UsersAdministration({ sub, param }) {
   const translate = useTranslate();
   const usersAdministrationNavigationService = useService(UsersAdministrationNavigationService);
   const subName = sub?.name || EUsersAdministrationSub.Users;
-
-  const tabStyle = [BASE_TAB_STYLES, tabsStyles, UNDERLINE_TAB_STYLES];
-  const style = useStyles(ADMINISTRATION_TOOLS_PANEL_STYLES, tabStyle);
+  const styles = useS(style);
 
   function openSub({ tabId }: ITabData) {
     if (subName === tabId) {
@@ -58,29 +55,28 @@ export const UsersAdministration: AdministrationItemContentComponent = observer(
     usersAdministrationNavigationService.navToSub(tabId as EUsersAdministrationSub, param || undefined);
   }
 
-  return styled(style)(
+  return (
     <TabsState selectedId={subName} lazy onChange={openSub}>
-      <ToolsPanel>
-        <TabList style={style}>
-          <Tab tabId={EUsersAdministrationSub.Users} style={style}>{translate('authentication_administration_item_users')}</Tab>
-          <Tab tabId={EUsersAdministrationSub.Roles} style={style}>{translate('administration_roles_tab_title')}</Tab>
-          {/* <Tab
-            tabId={EUsersAdministrationSub.MetaProperties}
-            style={style}
-          >
-            {translate('authentication_administration_item_metaParameters')}
-          </Tab> */}
+      <ToolsPanel bottomBorder>
+        <TabList className={s(styles, { tabList: true })} aria-label="User Administration pages">
+          <SContext registry={mainTabsRegistry}>
+            <Tab tabId={EUsersAdministrationSub.Users}>
+              <TabTitle>{translate('authentication_administration_item_users')}</TabTitle>
+            </Tab>
+            <Tab tabId={EUsersAdministrationSub.Teams}>
+              <TabTitle>{translate('administration_teams_tab_title')}</TabTitle>
+            </Tab>
+          </SContext>
         </TabList>
       </ToolsPanel>
-      <TabPanel tabId={EUsersAdministrationSub.Users}>
-        <UsersTable sub={sub} param={param} />
-      </TabPanel>
-      <TabPanel tabId={EUsersAdministrationSub.Roles}>
-        <RolesPage sub={sub} param={param} />
-      </TabPanel>
-      <TabPanel tabId={EUsersAdministrationSub.MetaProperties}>
-        <MetaParameters />
-      </TabPanel>
+      <SContext registry={tabPanelRegistry}>
+        <TabPanel tabId={EUsersAdministrationSub.Users}>
+          <UsersPage param={param} />
+        </TabPanel>
+        <TabPanel tabId={EUsersAdministrationSub.Teams}>
+          <TeamsPage param={param} />
+        </TabPanel>
+      </SContext>
     </TabsState>
   );
 });

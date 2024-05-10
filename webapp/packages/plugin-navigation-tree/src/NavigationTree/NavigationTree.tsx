@@ -1,0 +1,117 @@
+/*
+ * CloudBeaver - Cloud Database Manager
+ * Copyright (C) 2020-2024 DBeaver Corp and others
+ *
+ * Licensed under the Apache License, Version 2.0.
+ * you may not use this file except in compliance with the License.
+ */
+import { observer } from 'mobx-react-lite';
+import { useMemo } from 'react';
+
+import { s, SContext, StyleRegistry, Translate, useS, useUserData } from '@cloudbeaver/core-blocks';
+import { useService } from '@cloudbeaver/core-di';
+import { NavNodeInfoResource, NavTreeResource, ProjectsNavNodeService, ROOT_NODE_PATH } from '@cloudbeaver/core-navigation-tree';
+import { ProjectsService } from '@cloudbeaver/core-projects';
+import { CaptureView } from '@cloudbeaver/core-view';
+
+import { ElementsTreeToolsStyles } from '../index';
+import { NavNodeViewService } from '../NodesManager/NavNodeView/NavNodeViewService';
+import { navigationTreeConnectionGroupFilter } from './ConnectionGroup/navigationTreeConnectionGroupFilter';
+import { navigationTreeConnectionGroupRenderer } from './ConnectionGroup/navigationTreeConnectionGroupRenderer';
+import { navTreeConnectionRenderer } from './ConnectionsRenderer/navTreeConnectionRenderer';
+import { ElementsTree } from './ElementsTree/ElementsTree';
+import {
+  createElementsTreeSettings,
+  validateElementsTreeSettings,
+} from './ElementsTree/ElementsTreeTools/NavigationTreeSettings/createElementsTreeSettings';
+import { transformFilteredNodeInfo } from './ElementsTree/transformFilteredNodeInfo';
+import type { IElementsTreeSettings } from './ElementsTree/useElementsTree';
+import elementsTreeToolsStyles from './ElementsTreeTools.m.css';
+import { getNavigationTreeUserSettingsId } from './getNavigationTreeUserSettingsId';
+import style from './NavigationTree.m.css';
+import { navigationTreeDuplicateFilter } from './navigationTreeDuplicateIdFilter';
+import { NavigationTreeService } from './NavigationTreeService';
+import { navigationTreeProjectFilter } from './ProjectsRenderer/navigationTreeProjectFilter';
+import { navigationTreeProjectSearchCompare } from './ProjectsRenderer/navigationTreeProjectSearchCompare';
+import { navigationTreeProjectsExpandStateGetter } from './ProjectsRenderer/navigationTreeProjectsExpandStateGetter';
+import { navigationTreeProjectsRendererRenderer } from './ProjectsRenderer/navigationTreeProjectsRendererRenderer';
+import { ProjectsSettingsPlaceholderElement } from './ProjectsRenderer/ProjectsSettingsForm';
+import { useNavigationTree } from './useNavigationTree';
+
+const registry: StyleRegistry = [
+  [
+    ElementsTreeToolsStyles,
+    {
+      mode: 'append',
+      styles: [elementsTreeToolsStyles],
+    },
+  ],
+];
+
+export const NavigationTree = observer(function NavigationTree() {
+  const styles = useS(style);
+  const projectsNavNodeService = useService(ProjectsNavNodeService);
+  const projectsService = useService(ProjectsService);
+  const navTreeService = useService(NavigationTreeService);
+  const navNodeInfoResource = useService(NavNodeInfoResource);
+  const navTreeResource = useService(NavTreeResource);
+  const navNodeViewService = useService(NavNodeViewService);
+
+  const root = ROOT_NODE_PATH;
+  const { handleOpen, handleSelect, handleSelectReset } = useNavigationTree();
+
+  const connectionGroupFilter = useMemo(() => navigationTreeConnectionGroupFilter(navNodeInfoResource), [navNodeInfoResource]);
+
+  const settings = useUserData<IElementsTreeSettings>(
+    getNavigationTreeUserSettingsId(root),
+    createElementsTreeSettings,
+    () => {},
+    validateElementsTreeSettings,
+  );
+
+  const duplicateFilter = useMemo(() => navigationTreeDuplicateFilter(navNodeViewService), [navNodeViewService]);
+  const connectionRenderer = useMemo(() => navTreeConnectionRenderer(navNodeInfoResource), [navNodeInfoResource]);
+  const projectsRendererRenderer = useMemo(() => navigationTreeProjectsRendererRenderer(navNodeInfoResource), [navNodeInfoResource]);
+  const projectsExpandStateGetter = useMemo(
+    () => navigationTreeProjectsExpandStateGetter(navNodeInfoResource, projectsService, projectsNavNodeService),
+    [navNodeInfoResource, projectsService, projectsNavNodeService],
+  );
+  const transformFilteredNode = useMemo(() => transformFilteredNodeInfo(navNodeInfoResource), [navNodeInfoResource]);
+  const projectFilter = useMemo(
+    () => navigationTreeProjectFilter(projectsNavNodeService, projectsService, navNodeInfoResource, navTreeResource),
+    [projectsNavNodeService, projectsService, navNodeInfoResource, navTreeResource],
+  );
+
+  const settingsElements = useMemo(() => [ProjectsSettingsPlaceholderElement], []);
+
+  return (
+    <SContext registry={registry}>
+      <CaptureView view={navTreeService} className={s(styles, { captureView: true })}>
+        <ElementsTree
+          root={root}
+          localState={navTreeService.treeState}
+          filters={[duplicateFilter, connectionGroupFilter, projectFilter]}
+          renderers={[projectsRendererRenderer, navigationTreeConnectionGroupRenderer, connectionRenderer]}
+          navNodeFilterCompare={navigationTreeProjectSearchCompare}
+          nodeInfoTransformers={[transformFilteredNode]}
+          expandStateGetters={[projectsExpandStateGetter]}
+          settingsElements={settingsElements}
+          className={s(styles, { elementsTree: true })}
+          emptyPlaceholder={() => (
+            <div className={s(styles, { center: true })}>
+              <div className={s(styles, { message: true })}>
+                <Translate token="app_navigationTree_empty_placeholder" />
+              </div>
+            </div>
+          )}
+          customSelect={handleSelect}
+          customSelectReset={handleSelectReset}
+          settings={settings}
+          getChildren={navTreeService.getChildren}
+          loadChildren={navTreeService.loadNestedNodes}
+          onOpen={handleOpen}
+        />
+      </CaptureView>
+    </SContext>
+  );
+});

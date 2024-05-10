@@ -1,116 +1,122 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import { runInAction } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
-import { UserInfoResource } from '@cloudbeaver/core-authentication';
-import { TextPlaceholder, Loader, ExceptionMessage, useMapResource, ColoredContainer, Group, ObjectPropertyInfoForm, BASE_CONTAINERS_STYLES } from '@cloudbeaver/core-blocks';
-import { useService } from '@cloudbeaver/core-di';
-import { useTranslate } from '@cloudbeaver/core-localization';
-import { useStyles } from '@cloudbeaver/core-theming';
-import { TabContainerPanelComponent, AuthenticationProvider, useTab, useTabState } from '@cloudbeaver/core-ui';
+import { AUTH_PROVIDER_LOCAL_ID, AuthProvidersResource, UserInfoResource } from '@cloudbeaver/core-authentication';
+import {
+  ColoredContainer,
+  ExceptionMessage,
+  Group,
+  Loader,
+  ObjectPropertyInfoForm,
+  s,
+  TextPlaceholder,
+  useResource,
+  useS,
+  useTranslate,
+} from '@cloudbeaver/core-blocks';
+import { createConnectionParam, DatabaseAuthModelsResource, DBDriverResource } from '@cloudbeaver/core-connections';
+import { TabContainerPanelComponent, useTab, useTabState } from '@cloudbeaver/core-ui';
 
 import type { IConnectionFormProps } from '../IConnectionFormProps';
-
-const style = css`
-  Loader {
-    height: 100%;
-  }
-  ColoredContainer {
-    flex: 1;
-    overflow: auto;
-  }
-`;
+import styles from './OriginInfo.m.css';
 
 export const OriginInfo: TabContainerPanelComponent<IConnectionFormProps> = observer(function OriginInfo({
   tabId,
-  state: {
-    info,
-    resource,
-  },
+  state: { info, resource, config },
 }) {
   const tab = useTab(tabId);
   const translate = useTranslate();
-  const userInfoService = useService(UserInfoResource);
+  const userInfoLoader = useResource(OriginInfo, UserInfoResource, undefined);
   const state = useTabState<Record<string, any>>();
-  const styles = useStyles(style, BASE_CONTAINERS_STYLES);
+  const style = useS(styles);
+  const driverLoader = useResource(OriginInfo, DBDriverResource, config.driverId ?? null);
+  const authModeLoader = useResource(
+    OriginInfo,
+    DatabaseAuthModelsResource,
+    config.authModelId ?? info?.authModel ?? driverLoader.data?.defaultAuthModel ?? null,
+  );
 
-  const connection = useMapResource(OriginInfo, resource, {
-    key: tab.selected ? info!.id : null,
-    includes: ['includeOrigin', 'customIncludeOriginDetails'],
-  }, {
-    isActive: () => !info?.origin || userInfoService.hasOrigin(info.origin),
-    onData: (connection, res, prev) => {
-      if (!connection.origin.details) {
-        return;
-      }
+  const providerId = authModeLoader.data?.requiredAuth ?? info?.requiredAuth ?? AUTH_PROVIDER_LOCAL_ID;
+  const isAuthenticated = userInfoLoader.resource.hasToken(providerId);
+  const providerLoader = useResource(OriginInfo, AuthProvidersResource, providerId);
 
-      if (prev?.origin.details) {
-        for (const property of prev.origin.details) {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete state[property.id!];
-        }
-      }
-
-      for (const property of connection.origin.details) {
-        state[property.id!] = property.value;
-      }
+  const connection = useResource(
+    OriginInfo,
+    resource,
+    {
+      key: tab.selected && info ? createConnectionParam(info.projectId, info.id) : null,
+      includes: ['includeOrigin', 'customIncludeOriginDetails'] as const,
     },
-  }
+    {
+      active: isAuthenticated,
+      onData: connection => {
+        runInAction(() => {
+          if (!connection.origin.details) {
+            return;
+          }
+
+          for (const property of Object.keys(state)) {
+            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+            delete state[property];
+          }
+
+          for (const property of connection.origin.details) {
+            state[property.id!] = property.value;
+          }
+        });
+      },
+    },
   );
 
   if (connection.isLoading()) {
-    return styled(styles)(
-      <ColoredContainer>
-        <Loader key="static" />
+    return (
+      <ColoredContainer className={s(style, { coloredContainer: true })}>
+        <Loader key="static" className={s(style, { loader: true })} />
       </ColoredContainer>
     );
   }
 
   if (connection.exception) {
-    return styled(styles)(
-      <ColoredContainer>
+    return (
+      <ColoredContainer className={s(style, { coloredContainer: true })}>
         <ExceptionMessage exception={connection.exception} onRetry={connection.reload} />
       </ColoredContainer>
     );
   }
 
-  const authorized = !info?.origin || userInfoService.hasOrigin(info.origin);
-
-  if (!authorized && info?.origin) {
-    return styled(styles)(
-      <ColoredContainer parent vertical>
-        <AuthenticationProvider origin={info.origin} onAuthenticate={connection.reload} />
+  if (!isAuthenticated) {
+    return (
+      <ColoredContainer className={s(style, { coloredContainer: true })} parent>
+        <TextPlaceholder>
+          {translate('connections_public_connection_cloud_auth_required', undefined, {
+            providerLabel: providerLoader.data?.label,
+          })}
+        </TextPlaceholder>
       </ColoredContainer>
     );
   }
 
   if (!connection.data?.origin.details || connection.data.origin.details.length === 0) {
-    return styled(styles)(
-      <ColoredContainer parent>
+    return (
+      <ColoredContainer className={s(style, { coloredContainer: true })} parent>
         <TextPlaceholder>{translate('connections_administration_connection_no_information')}</TextPlaceholder>
       </ColoredContainer>
     );
   }
 
-  return styled(styles)(
-    <ColoredContainer parent>
+  return (
+    <ColoredContainer className={s(style, { coloredContainer: true })} parent>
       <Group large gap>
-        <ObjectPropertyInfoForm
-          properties={connection.data.origin.details}
-          state={state}
-          readOnly
-          small
-          autoHide
-        />
+        <ObjectPropertyInfoForm properties={connection.data.origin.details} state={state} readOnly small autoHide />
       </Group>
-      <Loader key="overlay" loading={connection.isLoading()} overlay />
+      <Loader key="overlay" className={s(style, { loader: true })} loading={connection.isLoading()} overlay />
     </ColoredContainer>
   );
 });

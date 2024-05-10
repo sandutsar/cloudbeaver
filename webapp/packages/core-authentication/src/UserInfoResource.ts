@@ -1,32 +1,44 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { computed, makeObservable, runInAction } from 'mobx';
 
 import { injectable } from '@cloudbeaver/core-di';
-import { SyncExecutor, ISyncExecutor } from '@cloudbeaver/core-executor';
-import { SessionResource } from '@cloudbeaver/core-root';
-import { CachedDataResource, GetActiveUserQueryVariables, GraphQLService, isResourceKeyList, ObjectOrigin, ResourceKey, UserAuthToken, UserInfo } from '@cloudbeaver/core-sdk';
+import { AutoRunningTask, ISyncExecutor, ITask, SyncExecutor, whileTask } from '@cloudbeaver/core-executor';
+import { CachedDataResource, type ResourceKeySimple, ResourceKeyUtils } from '@cloudbeaver/core-resource';
+import { SessionDataResource, SessionResource } from '@cloudbeaver/core-root';
+import { AuthInfo, AuthLogoutQuery, AuthStatus, GetActiveUserQueryVariables, GraphQLService, UserInfo } from '@cloudbeaver/core-sdk';
 
 import { AUTH_PROVIDER_LOCAL_ID } from './AUTH_PROVIDER_LOCAL_ID';
 import { AuthProviderService } from './AuthProviderService';
+import type { ELMRole } from './ELMRole';
 import type { IAuthCredentials } from './IAuthCredentials';
 
 export type UserInfoIncludes = GetActiveUserQueryVariables;
 
+export type UserLogoutInfo = AuthLogoutQuery['result'];
+
+export interface ILoginOptions {
+  credentials?: IAuthCredentials;
+  configurationId?: string;
+  linkUser?: boolean;
+  forceSessionsLogout?: boolean;
+}
+
+export const ANONYMOUS_USER_ID = 'anonymous';
+
 @injectable()
-export class UserInfoResource extends CachedDataResource<
-UserInfo | null,
-void,
-void,
-UserInfoIncludes
-> {
-  readonly userChange: ISyncExecutor<string>;
+export class UserInfoResource extends CachedDataResource<UserInfo | null, void, UserInfoIncludes> {
+  readonly onUserChange: ISyncExecutor<string>;
+  readonly onException: ISyncExecutor<Error>;
+
+  get authRole(): ELMRole | undefined {
+    return this.data?.authRole as ELMRole | undefined;
+  }
 
   get parametersAvailable() {
     return this.data !== null;
@@ -35,13 +47,19 @@ UserInfoIncludes
   constructor(
     private readonly graphQLService: GraphQLService,
     private readonly authProviderService: AuthProviderService,
-    private readonly sessionResource: SessionResource
+    sessionResource: SessionResource,
+    private readonly sessionDataResource: SessionDataResource,
   ) {
-    super(null, ['customIncludeOriginDetails', 'includeConfigurationParameters']);
+    super(() => null, undefined, ['customIncludeOriginDetails', 'includeConfigurationParameters']);
 
-    this.userChange = new SyncExecutor();
+    this.onUserChange = new SyncExecutor();
+    this.onException = new SyncExecutor();
 
-    this.sync(sessionResource);
+    this.sync(
+      sessionResource,
+      () => {},
+      () => {},
+    );
 
     makeObservable(this, {
       parametersAvailable: computed,
@@ -53,19 +71,11 @@ UserInfoIncludes
   }
 
   getId(): string {
-    return this.data?.userId || 'anonymous';
+    return this.data?.userId || ANONYMOUS_USER_ID;
   }
 
-  hasOrigin(origin: ObjectOrigin): boolean {
-    if (!this.data) {
-      return false;
-    }
-
-    return this.hasToken(origin.type, origin.subType);
-  }
-
-  hasToken(type: string, subType?: string): boolean {
-    if (type === AUTH_PROVIDER_LOCAL_ID) {
+  hasToken(providerId: string): boolean {
+    if (providerId === AUTH_PROVIDER_LOCAL_ID) {
       return true;
     }
 
@@ -74,85 +84,162 @@ UserInfoIncludes
     }
 
     // TODO: will be changed due wrong origin in authTokens
-    return (
-      this.data.authTokens.some(token => token.origin.type === (subType ?? type))
-      || this.data.authTokens.some(token => token.origin.type === type && token.origin.subType === subType)
+    return this.data.authTokens.some(token => token.authProvider === providerId);
+  }
+
+  async login(provider: string, { credentials, configurationId, linkUser, forceSessionsLogout }: ILoginOptions): Promise<AuthInfo> {
+    let processedCredentials: Record<string, any> | undefined;
+
+    if (credentials) {
+      const processed = await this.authProviderService.processCredentials(provider, credentials);
+      processedCredentials = processed.credentials;
+    }
+
+    const { authInfo } = await this.graphQLService.sdk.authLogin({
+      provider,
+      configuration: configurationId,
+      credentials: processedCredentials,
+      linkUser,
+      customIncludeOriginDetails: true,
+      forceSessionsLogout,
+    });
+
+    if (authInfo.userTokens && authInfo.authStatus === AuthStatus.Success) {
+      this.resetIncludes();
+      this.setData(await this.loader());
+      this.sessionDataResource.markOutdated();
+    }
+
+    return authInfo as AuthInfo;
+  }
+
+  finishFederatedAuthentication(authId: string, linkUser?: boolean): ITask<UserInfo | null> {
+    let activeTask: ITask<AuthInfo> | undefined;
+
+    return new AutoRunningTask<UserInfo | null>(
+      async () => {
+        activeTask = whileTask<AuthInfo>(
+          authInfo => {
+            if (authInfo.authStatus === AuthStatus.Success) {
+              return true;
+            } else if (authInfo.authStatus === AuthStatus.Error) {
+              throw new Error('Authentication error');
+            }
+
+            return false;
+          },
+          async () => {
+            const { authInfo } = await this.graphQLService.sdk.getAuthStatus({
+              authId,
+              linkUser,
+              customIncludeOriginDetails: true,
+            });
+            return authInfo as AuthInfo;
+          },
+          1000,
+        );
+
+        const authInfo = await activeTask;
+
+        if (authInfo.userTokens && authInfo.authStatus === AuthStatus.Success) {
+          this.resetIncludes();
+          this.setData(await this.loader());
+          this.sessionDataResource.markOutdated();
+        }
+
+        return this.data;
+      },
+      () => {
+        activeTask?.cancel();
+      },
     );
   }
 
-  async login(provider: string, credentials: IAuthCredentials, link?: boolean): Promise<UserInfo | null> {
-    await this.performUpdate(undefined, [], async () => {
-      const processedCredentials = await this.authProviderService.processCredentials(provider, credentials);
-
-      const { authToken } = await this.graphQLService.sdk.authLogin({
-        provider,
-        credentials: processedCredentials.credentials,
-        linkUser: link,
-        customIncludeOriginDetails: true,
-      });
-
-      this.resetIncludes();
-      if (this.data === null || link) {
-        this.setData(await this.loader());
-      } else {
-        this.data.authTokens.push(authToken as UserAuthToken);
-      }
+  async logout(provider?: string, configuration?: string): Promise<AuthLogoutQuery> {
+    const result = await this.graphQLService.sdk.authLogout({
+      provider,
+      configuration,
     });
-    this.sessionResource.markOutdated();
 
-    return this.data;
+    this.resetIncludes();
+    this.setData(await this.loader());
+    this.sessionDataResource.markOutdated();
+
+    return result;
   }
 
-  async logout(): Promise<void> {
+  async updatePreferences(preferences: Record<string, any>): Promise<UserInfo | null> {
     await this.performUpdate(undefined, [], async () => {
-      if (this.data) {
-        await this.graphQLService.sdk.authLogout();
-        this.setData(null);
-        this.resetIncludes();
-      }
+      const { user } = await this.graphQLService.sdk.updateUserPreferences({
+        preferences,
+        ...this.getDefaultIncludes(),
+        ...this.getIncludesMap(),
+      });
+
+      this.setData(user as UserInfo | null);
     });
-    this.sessionResource.markOutdated();
+
+    return this.data;
   }
 
   async setConfigurationParameter(key: string, value: any): Promise<UserInfo | null> {
-    await this.graphQLService.sdk.setUserConfigurationParameter({
-      name: key,
-      value,
-    });
+    await this.load();
 
-    if (this.data) {
-      this.data.configurationParameters[key] = value;
+    if (!this.parametersAvailable) {
+      return this.data;
     }
+
+    await this.performUpdate(undefined, [], async () => {
+      await this.graphQLService.sdk.setUserConfigurationParameter({
+        name: key,
+        value,
+      });
+
+      if (this.data) {
+        this.data.configurationParameters[key] = value;
+      }
+
+      this.onDataOutdated.execute();
+    });
 
     return this.data;
   }
 
-  async deleteConfigurationParameter(key: ResourceKey<string>): Promise<UserInfo | null> {
-    if (isResourceKeyList(key)) {
-      const keyList: string[] = [];
-      for (const item of key.list) {
+  async updateLocalPassword(oldPassword: string, newPassword: string): Promise<void> {
+    await this.performUpdate(undefined, [], async () => {
+      await this.graphQLService.sdk.authChangeLocalPassword({
+        oldPassword: this.authProviderService.hashValue(oldPassword),
+        newPassword: this.authProviderService.hashValue(newPassword),
+      });
+    });
+  }
+
+  async deleteConfigurationParameter(key: ResourceKeySimple<string>): Promise<UserInfo | null> {
+    await this.load();
+
+    if (!this.parametersAvailable) {
+      return this.data;
+    }
+
+    const keyList: string[] = [];
+    await this.performUpdate(undefined, [], async () => {
+      await ResourceKeyUtils.forEachAsync(key, async name => {
         await this.graphQLService.sdk.setUserConfigurationParameter({
-          name: item,
+          name,
           value: null,
         });
 
-        keyList.push(item);
-      }
+        keyList.push(name);
+      });
 
       runInAction(() => {
         for (const item of keyList) {
           delete this.data?.configurationParameters[item];
         }
       });
-    } else {
-      await this.graphQLService.sdk.setUserConfigurationParameter({
-        name: key,
-        value: null,
-      });
 
-      delete this.data?.configurationParameters[key];
-    }
-
+      this.onDataOutdated.execute();
+    });
     return this.data;
   }
 
@@ -160,22 +247,30 @@ UserInfoIncludes
     return this.data?.configurationParameters[key];
   }
 
-  protected async loader(key: void, includes?: string[]): Promise<UserInfo | null> {
-    const { user } = await this.graphQLService.sdk.getActiveUser({
-      ...this.getDefaultIncludes(),
-      ...this.getIncludesMap(key, includes),
-    });
+  protected async loader(key: void, includes?: ReadonlyArray<string>): Promise<UserInfo | null> {
+    try {
+      const { user } = await this.graphQLService.sdk.getActiveUser({
+        ...this.getDefaultIncludes(),
+        ...this.getIncludesMap(key, includes),
+      });
 
-    return (user as UserInfo | null) ?? null;
+      return (user as UserInfo | null) || null;
+    } catch (exception: any) {
+      if (this.onException.isEmpty) {
+        throw exception;
+      }
+      this.onException.execute(exception);
+      return null;
+    }
   }
 
   protected setData(data: UserInfo | null): void {
     const prevUserId = this.getId();
-    this.data = data;
+    super.setData(data);
     const currentUserId = this.getId();
 
     if (prevUserId !== currentUserId) {
-      this.userChange.execute(currentUserId);
+      this.onUserChange.execute(currentUserId);
     }
   }
 
@@ -185,16 +280,5 @@ UserInfoIncludes
       includeConfigurationParameters: false,
       includeMetaParameters: false,
     };
-  }
-
-  protected resetIncludes(): void {
-    const metadata = this.getMetadata();
-    metadata.includes = [...this.defaultIncludes];
-  }
-
-  getIncludes(key: void): string[] {
-    key = this.transformParam(key);
-    const metadata = this.getMetadata(key);
-    return metadata.includes;
   }
 }

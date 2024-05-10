@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,7 @@ import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.model.data.DBDAttributeConstraint;
 import org.jkiss.dbeaver.model.data.DBDDataFilter;
 import org.jkiss.dbeaver.model.exec.DBCLogicalOperator;
-import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.struct.DBSAttributeBase;
-import org.jkiss.dbeaver.model.struct.DBSDataContainer;
 import org.jkiss.utils.CommonUtils;
 
 import java.text.MessageFormat;
@@ -61,7 +59,7 @@ public class WebSQLDataFilter {
         this.where = CommonUtils.toString(filterProps.get("where"), null);
         Object constraints = filterProps.get("constraints");
         if (constraints instanceof Collection) {
-            for (Object constrItem : (Collection)constraints) {
+            for (Object constrItem : (Collection<?>)constraints) {
                 if (constrItem instanceof Map) {
                     this.constraints.add(
                         new WebSQLDataFilterConstraint((Map<String, Object>)constrItem));
@@ -94,8 +92,16 @@ public class WebSQLDataFilter {
         return where;
     }
 
-    public DBDDataFilter makeDataFilter(@Nullable WebSQLResultsInfo resultInfo) throws DBException
-    {
+    public static WebSQLDataFilter from(DBDDataFilter filter) {
+        var webFilter = new WebSQLDataFilter();
+        webFilter.where = filter.getWhere();
+        for (DBDAttributeConstraint constraint : filter.getConstraints()) {
+            webFilter.constraints.add(WebSQLDataFilterConstraint.from(constraint));
+        }
+        return webFilter;
+    }
+
+    public DBDDataFilter makeDataFilter(@Nullable WebSQLResultsInfo resultInfo) throws DBException {
         DBDDataFilter dataFilter = new DBDDataFilter();
         dataFilter.setWhere(where);
         if (CommonUtils.isEmpty(constraints)) {

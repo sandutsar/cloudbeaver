@@ -1,46 +1,37 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
-import styled, { css } from 'reshadow';
 
-import { AuthInfoService, AuthProvider, comparePublicAuthConfigurations } from '@cloudbeaver/core-authentication';
-import { Filter, IconOrImage, Link, Cell, getComputed, TextPlaceholder } from '@cloudbeaver/core-blocks';
+import { AuthProvider, AuthProviderConfiguration, AuthProvidersResource, comparePublicAuthConfigurations } from '@cloudbeaver/core-authentication';
+import {
+  Button,
+  Cell,
+  Container,
+  Filter,
+  getComputed,
+  IconOrImage,
+  Link,
+  Loader,
+  s,
+  TextPlaceholder,
+  Translate,
+  usePromiseState,
+  useS,
+  useTranslate,
+} from '@cloudbeaver/core-blocks';
 import { useService } from '@cloudbeaver/core-di';
-import { useTranslate } from '@cloudbeaver/core-localization';
-import type { AuthProviderConfiguration } from '@cloudbeaver/core-sdk';
-import { useStyles } from '@cloudbeaver/core-theming';
+import type { ITask } from '@cloudbeaver/core-executor';
+import type { UserInfo } from '@cloudbeaver/core-sdk';
+import { ServerConfigurationAdministrationNavService } from '@cloudbeaver/plugin-administration';
 
 import { AuthenticationService } from '../../AuthenticationService';
-
-const styles = css`
-    container {
-      display: flex;
-      flex-direction: column;
-      overflow: auto;
-    }
-    Filter {
-      margin: 0 24px 12px 24px;
-    }
-    list {
-      overflow: auto;
-    }
-    Cell {
-      composes: theme-border-color-secondary from global;
-      border-bottom: 1px solid;
-      padding: 0 16px;
-    }
-    IconOrImage {
-      width: 100%;
-      height: 100%;
-    }
-`;
+import styles from './ConfigurationsList.m.css';
 
 interface IProviderConfiguration {
   provider: AuthProvider;
@@ -48,50 +39,60 @@ interface IProviderConfiguration {
 }
 
 interface Props {
+  activeProvider: AuthProvider | null;
+  activeConfiguration: AuthProviderConfiguration | null;
   providers: AuthProvider[];
+  authTask: ITask<UserInfo | null> | null;
+  login: (linkUser: boolean, provider?: AuthProvider, configuration?: AuthProviderConfiguration) => Promise<void>;
   onClose?: () => void;
   className?: string;
 }
 
-export const ConfigurationsList = observer<Props>(function ConfigurationsList({ providers, onClose, className }) {
-  const authInfoService = useService(AuthInfoService);
+export const ConfigurationsList = observer<Props>(function ConfigurationsList({
+  activeProvider,
+  activeConfiguration,
+  providers,
+  authTask,
+  login,
+  onClose,
+  className,
+}) {
+  const serverConfigurationAdministrationNavService = useService(ServerConfigurationAdministrationNavService);
   const authenticationService = useService(AuthenticationService);
   const translate = useTranslate();
-  const style = useStyles(styles);
+  const style = useS(styles);
 
   const [search, setSearch] = useState('');
-  const configurations = getComputed<IProviderConfiguration[]>(() => providers.map(
-    provider => (
-      (provider.configurations || [])
-        .filter(configuration => configuration.signInLink)
-        .map(configuration => ({ provider, configuration }))
-    )).flat()
+  const authTaskState = usePromiseState(authTask);
+  const authProvidersResource = useService(AuthProvidersResource);
+  const configurations = getComputed<IProviderConfiguration[]>(() =>
+    providers
+      .map(provider =>
+        (provider.configurations || []).filter(configuration => configuration.signInLink).map(configuration => ({ provider, configuration })),
+      )
+      .flat(),
   );
 
-  const sortedConfigurations = configurations
-    .slice()
-    .sort((a, b) => comparePublicAuthConfigurations(a.configuration, b.configuration));
+  const sortedConfigurations = configurations.slice().sort((a, b) => comparePublicAuthConfigurations(a.configuration, b.configuration));
 
   let filteredConfigurations: IProviderConfiguration[];
+  const providerDisabled = authProvidersResource.isEnabled(activeProvider?.id || '') === false;
 
   if (!search) {
-    filteredConfigurations =  sortedConfigurations;
+    filteredConfigurations = sortedConfigurations;
   }
 
-  filteredConfigurations =  sortedConfigurations.filter(({ configuration }) => {
+  filteredConfigurations = sortedConfigurations.filter(({ configuration }) => {
     const target = `${configuration.displayName}${configuration.description || ''}`;
     return target.toUpperCase().includes(search.toUpperCase());
   });
 
-  async function auth({ provider, configuration }: IProviderConfiguration) {
-    const user = await authInfoService.sso(provider.id, configuration);
-
-    if (user) {
-      onClose?.();
-    }
+  function navToSettings() {
+    onClose?.();
+    serverConfigurationAdministrationNavService.navToSettings();
   }
 
-  function navToSettings() {
+  function navToIdentityProvidersSettings() {
     onClose?.();
     authenticationService.configureIdentityProvider?.();
   }
@@ -100,38 +101,53 @@ export const ConfigurationsList = observer<Props>(function ConfigurationsList({ 
     return (
       <TextPlaceholder>
         {translate('authentication_configure')}
-        {authenticationService.configureIdentityProvider && (
-          <Link onClick={navToSettings}>
-            {translate('ui_configure')}
-          </Link>
-        )}
+        {authenticationService.configureIdentityProvider && <Link onClick={navToIdentityProvidersSettings}>{translate('ui_configure')}</Link>}
       </TextPlaceholder>
     );
   }
 
-  return styled(style)(
-    <container className={className}>
+  if (activeProvider && activeConfiguration) {
+    return (
+      <Container className={className} center>
+        <Loader state={authTaskState} message="authentication_authorizing" hideException>
+          <Container keepSize center>
+            {providerDisabled ? (
+              <TextPlaceholder>
+                {translate('plugin_authentication_authentication_method_disabled')}
+                {authenticationService.configureIdentityProvider && <Link onClick={navToSettings}>{translate('ui_configure')}</Link>}
+              </TextPlaceholder>
+            ) : (
+              <Button type="button" mod={['unelevated']} onClick={() => login(false, activeProvider, activeConfiguration)}>
+                <Translate token="authentication_login" />
+              </Button>
+            )}
+          </Container>
+        </Loader>
+      </Container>
+    );
+  }
+
+  return (
+    <Container className={className} noWrap vertical>
       {configurations.length >= 10 && (
-        <Filter
-          placeholder={translate('authentication_identity_provider_search_placeholder')}
-          value={search}
-          max
-          onFilter={setSearch}
-        />
+        <Container keepSize>
+          <Filter
+            className={s(style, { filter: true })}
+            placeholder={translate('authentication_identity_provider_search_placeholder')}
+            value={search}
+            onChange={setSearch}
+          />
+        </Container>
       )}
-      <list>
+      <Container overflow>
         {filteredConfigurations.map(({ provider, configuration }) => {
           const icon = configuration.iconURL || provider.icon;
           const title = `${configuration.displayName}\n${configuration.description || ''}`;
           return (
-            <Link
-              key={configuration.id}
-              title={title}
-              wrapper
-              onClick={() => auth({ provider, configuration })}
-            >
+            <Link key={configuration.id} title={title} wrapper onClick={() => login(false, provider, configuration)}>
               <Cell
-                before={icon ? <IconOrImage icon={icon} /> : undefined}
+                className={s(style, { cell: true })}
+                before={icon ? <IconOrImage className={s(style, { iconOrImage: true })} icon={icon} /> : undefined}
                 description={configuration.description}
               >
                 {configuration.displayName}
@@ -139,7 +155,8 @@ export const ConfigurationsList = observer<Props>(function ConfigurationsList({ 
             </Link>
           );
         })}
-      </list>
-    </container>
+      </Container>
+      <Loader state={authTaskState} message="authentication_authorizing" overlay hideException />
+    </Container>
   );
 });

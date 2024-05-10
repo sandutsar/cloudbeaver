@@ -1,28 +1,30 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { IconOrImage, s, useS } from '@cloudbeaver/core-blocks';
 
-import styled from 'reshadow';
+import TabIconStyles from './TabIcon.m.css';
 
-import { IconOrImage } from '@cloudbeaver/core-blocks';
-import { useStyles } from '@cloudbeaver/core-theming';
-
-import { BASE_TAB_STYLES } from './BASE_TAB_STYLES';
-
-interface IProps {
+export interface TabIconProps {
   icon?: string;
   viewBox?: string;
   className?: string;
 }
 
-export const TabIcon: React.FC<IProps> = function TabIcon({ icon, viewBox, className }) {
-  return styled(useStyles(BASE_TAB_STYLES))(
-    <tab-icon className={className}>
-      {icon ? <IconOrImage icon={icon} viewBox={viewBox} /> : <placeholder />}
-    </tab-icon>
+export const TabIcon: React.FC<TabIconProps> = function TabIcon({ icon, viewBox, className }) {
+  const styles = useS(TabIconStyles);
+
+  return (
+    <div className={s(styles, { tabIcon: true }, className)}>
+      {icon ? (
+        <IconOrImage className={s(styles, { iconOrImage: true })} icon={icon} viewBox={viewBox} />
+      ) : (
+        <div className={s(styles, { placeholder: true })} />
+      )}
+    </div>
   );
 };

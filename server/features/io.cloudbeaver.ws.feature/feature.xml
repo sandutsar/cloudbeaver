@@ -2,7 +2,7 @@
 <feature
         id="io.cloudbeaver.ws.feature"
         label="%featureName"
-        version="1.0.3.qualifier"
+        version="1.0.50.qualifier"
         provider-name="%providerName"
         plugin="io.cloudbeaver.model">
 
@@ -18,7 +18,7 @@
         <import plugin="org.eclipse.core.resources" version="0.0.0" match="greaterOrEqual"/>
         <import plugin="org.eclipse.core.runtime" version="3.7" match="greaterOrEqual"/>
         <!-- Equinox -->
-        <import plugin="org.eclipse.equinox.launcher" version="0.0.0" match="greaterOrEqual"/>
+        <import plugin="org.jkiss.dbeaver.launcher" version="0.0.0" match="greaterOrEqual"/>
         <import plugin="org.eclipse.equinox.common" version="0.0.0" match="greaterOrEqual"/>
         <import plugin="org.eclipse.equinox.event" version="0.0.0" match="greaterOrEqual"/>
         <import plugin="org.eclipse.equinox.preferences" version="0.0.0" match="greaterOrEqual"/>
@@ -34,15 +34,10 @@
 
     <!-- 3rd party deps -->
     <plugin id="com.ibm.icu.base" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
-    <plugin id="javax.servlet" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
     <plugin id="com.google.gson" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
-    <plugin id="org.jkiss.bundle.graphql.java" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
-
     <!-- Logging -->
 
-    <plugin id="ch.qos.logback.core" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
-    <plugin id="ch.qos.logback.classic" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
-    <plugin id="ch.qos.logback.slf4j" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
+    <plugin id="io.cloudbeaver.slf4j" download-size="0" install-size="0" version="0.0.0" unpack="false"/>
 
 
 </feature>

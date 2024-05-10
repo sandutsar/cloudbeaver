@@ -1,12 +1,18 @@
 mutation updateConnection(
+  $projectId: ID!
   $config: ConnectionConfig!
-
-  $includeOrigin: Boolean!,
-  $customIncludeOriginDetails: Boolean!,
-  $includeAuthProperties: Boolean!,
-  $customIncludeNetworkHandlerCredentials: Boolean!
+  $includeOrigin: Boolean!
+  $customIncludeOriginDetails: Boolean!
+  $includeAuthProperties: Boolean!
+  $includeNetworkHandlersConfig: Boolean!
+  $includeCredentialsSaved: Boolean!
+  $includeAuthNeeded: Boolean!
+  $includeProperties: Boolean!
+  $includeProviderProperties: Boolean!
+  $includeSharedSecrets: Boolean!
+  $customIncludeOptions: Boolean!
 ) {
-  connection: updateConnection(config: $config) {
+  connection: updateConnection(projectId: $projectId, config: $config) {
     ...DatabaseConnection
   }
 }

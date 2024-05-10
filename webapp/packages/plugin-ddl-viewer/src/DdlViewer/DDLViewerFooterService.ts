@@ -1,16 +1,16 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { NavNodeManagerService } from '@cloudbeaver/core-app';
-import { ConnectionInfoResource } from '@cloudbeaver/core-connections';
+import { ConnectionInfoResource, createConnectionParam } from '@cloudbeaver/core-connections';
 import { injectable } from '@cloudbeaver/core-di';
-import { download, generateFileName } from '@cloudbeaver/core-utils';
-import { ActionService, ACTION_SAVE, DATA_CONTEXT_MENU, MenuService } from '@cloudbeaver/core-view';
+import { NavNodeManagerService } from '@cloudbeaver/core-navigation-tree';
+import { download, withTimestamp } from '@cloudbeaver/core-utils';
+import { ACTION_SAVE, ActionService, MenuService } from '@cloudbeaver/core-view';
+import { LocalStorageSqlDataSource } from '@cloudbeaver/plugin-sql-editor';
 import { ACTION_SQL_EDITOR_OPEN, SqlEditorNavigatorService } from '@cloudbeaver/plugin-sql-editor-navigation-tab';
 
 import { DATA_CONTEXT_DDL_VIEWER_NODE } from './DATA_CONTEXT_DDL_VIEWER_NODE';
@@ -24,27 +24,15 @@ export class DDLViewerFooterService {
     private readonly actionsService: ActionService,
     private readonly menuService: MenuService,
     private readonly sqlEditorNavigatorService: SqlEditorNavigatorService,
-    private readonly connectionInfoResource: ConnectionInfoResource
-  ) { }
+    private readonly connectionInfoResource: ConnectionInfoResource,
+  ) {}
 
   register(): void {
     this.actionsService.addHandler({
       id: 'ddl-viewer-footer-base-handler',
-      isActionApplicable(context, action) {
-        const menu = context.find(DATA_CONTEXT_MENU, MENU_DDL_VIEWER_FOOTER);
-        const node = context.tryGet(DATA_CONTEXT_DDL_VIEWER_NODE);
-
-        if (!menu || !node) {
-          return false;
-        }
-
-        if (action === ACTION_SAVE || action === ACTION_SQL_EDITOR_OPEN) {
-          const ddl = context.tryGet(DATA_CONTEXT_DDL_VIEWER_VALUE);
-          return !!ddl;
-        }
-
-        return false;
-      },
+      menus: [MENU_DDL_VIEWER_FOOTER],
+      contexts: [DATA_CONTEXT_DDL_VIEWER_NODE, DATA_CONTEXT_DDL_VIEWER_VALUE],
+      actions: [ACTION_SAVE, ACTION_SQL_EDITOR_OPEN],
       handler: async (context, action) => {
         switch (action) {
           case ACTION_SAVE: {
@@ -58,7 +46,7 @@ export class DDLViewerFooterService {
             const node = nodeId ? this.navNodeManagerService.getNode(nodeId) : undefined;
             const name = node?.name ? `DDL_${node.nodeType ? node.nodeType + '_' : ''}${node.name}` : 'DDL';
 
-            download(blob, generateFileName(name, '.sql'));
+            download(blob, `${withTimestamp(name)}.sql`);
             break;
           }
           case ACTION_SQL_EDITOR_OPEN: {
@@ -82,7 +70,8 @@ export class DDLViewerFooterService {
 
             await this.sqlEditorNavigatorService.openNewEditor({
               name,
-              connectionId: connection?.id,
+              dataSourceKey: LocalStorageSqlDataSource.key,
+              connectionKey: connection && createConnectionParam(connection),
               catalogId: container.catalogId,
               schemaId: container.schemaId,
               query: ddl,
@@ -100,12 +89,8 @@ export class DDLViewerFooterService {
     });
 
     this.menuService.addCreator({
-      isApplicable: context => context.get(DATA_CONTEXT_MENU) === MENU_DDL_VIEWER_FOOTER,
-      getItems: (context, items) => [
-        ...items,
-        ACTION_SAVE,
-        ACTION_SQL_EDITOR_OPEN,
-      ],
+      menus: [MENU_DDL_VIEWER_FOOTER],
+      getItems: (context, items) => [...items, ACTION_SAVE, ACTION_SQL_EDITOR_OPEN],
     });
   }
 }

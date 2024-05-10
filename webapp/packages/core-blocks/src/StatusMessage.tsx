@@ -1,67 +1,71 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
-import { IconOrImage, Link } from '@cloudbeaver/core-blocks';
 import { ENotificationType } from '@cloudbeaver/core-events';
-import { useTranslate } from '@cloudbeaver/core-localization';
+
+import { IconOrImage } from './IconOrImage';
+import { Link } from './Link';
+import { useTranslate } from './localization/useTranslate';
+import { s } from './s';
+import style from './StatusMessage.m.css';
+import { useErrorDetails } from './useErrorDetails';
+import { useS } from './useS';
 
 interface Props {
-  message: string | undefined | null;
-  status: ENotificationType | undefined;
-  onShowDetails?: () => void;
+  message?: string | string[] | null;
+  type?: ENotificationType | null;
+  exception?: Error | null;
   className?: string;
+  onShowDetails?: () => void;
 }
 
-const styles = css`
-  status-message {
-    overflow: hidden;
-    composes: theme-typography--caption from global;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  IconOrImage {
-    height: 24px;
-    width: 24px;
-  }
-  message, Link {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  Link {
-    cursor: pointer;
-  }
-`;
-
-export const StatusMessage = observer<Props>(function StatusMessage({ status, message, onShowDetails, className }) {
+export const StatusMessage = observer<Props>(function StatusMessage({ type, message, exception = null, className, onShowDetails }) {
+  const styles = useS(style);
   const translate = useTranslate();
-  message = message ? translate(message) : message;
+  const errorDetails = useErrorDetails(exception);
+  const isError = type === ENotificationType.Error || exception !== null;
+
+  if (Array.isArray(message)) {
+    message = message.map(m => translate(m)).join(', ');
+  } else if (message !== null) {
+    message = translate(message);
+  }
+
+  message = message ?? errorDetails.message;
   let icon = '/icons/info_icon.svg';
 
-  if (status === ENotificationType.Error) {
+  if (isError) {
     icon = '/icons/error_icon.svg';
-  } else if (status === ENotificationType.Success) {
+  } else if (type === ENotificationType.Success) {
     icon = '/icons/success_icon.svg';
   }
 
-  return styled(styles)(
-    <status-message className={className}>
+  if (errorDetails.hasDetails && !onShowDetails) {
+    onShowDetails = errorDetails.open;
+  }
+
+  return (
+    <div className={s(styles, { statusMessage: true }, className)}>
       {message && (
         <>
-          <IconOrImage icon={icon} />
-          <message title={message}>{onShowDetails ? <Link onClick={onShowDetails}>{message}</Link> : message}</message>
+          <IconOrImage className={s(styles, { iconOrImage: true })} icon={icon} />
+          <div className={s(styles, { message: true })} title={message}>
+            {onShowDetails ? (
+              <Link className={s(styles, { link: true })} onClick={onShowDetails}>
+                {message}
+              </Link>
+            ) : (
+              message
+            )}
+          </div>
         </>
       )}
-    </status-message>
+    </div>
   );
 });

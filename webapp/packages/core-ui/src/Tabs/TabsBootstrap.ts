@@ -1,13 +1,12 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
-import { ActionService, DATA_CONTEXT_MENU, menuExtractActions, MenuSeparatorItem, MenuService } from '@cloudbeaver/core-view';
+import { ActionService, DATA_CONTEXT_MENU, menuExtractItems, MenuSeparatorItem, MenuService } from '@cloudbeaver/core-view';
 
 import { ACTION_TAB_CLOSE } from './Actions/ACTION_TAB_CLOSE';
 import { ACTION_TAB_CLOSE_ALL } from './Actions/ACTION_TAB_CLOSE_ALL';
@@ -22,7 +21,7 @@ import { MENU_TAB } from './Tab/MENU_TAB';
 export class TabsBootstrap extends Bootstrap {
   constructor(
     private readonly actionService: ActionService,
-    private readonly menuService: MenuService
+    private readonly menuService: MenuService,
   ) {
     super();
   }
@@ -31,7 +30,7 @@ export class TabsBootstrap extends Bootstrap {
     this.actionService.addHandler({
       id: 'tabs-base-handler',
       isActionApplicable: (context, action) => {
-        const menu = context.find(DATA_CONTEXT_MENU, MENU_TAB);
+        const menu = context.hasValue(DATA_CONTEXT_MENU, MENU_TAB);
         const state = context.tryGet(DATA_CONTEXT_TABS_CONTEXT);
         const tab = context.tryGet(DATA_CONTEXT_TAB_ID);
 
@@ -86,9 +85,11 @@ export class TabsBootstrap extends Bootstrap {
     });
 
     this.menuService.addCreator({
+      menus: [MENU_TAB],
       isApplicable: context => {
+        const tab = context.tryGet(DATA_CONTEXT_TAB_ID);
         const state = context.tryGet(DATA_CONTEXT_TABS_CONTEXT);
-        return !!state?.enabledBaseActions && context.get(DATA_CONTEXT_MENU) === MENU_TAB;
+        return !!tab && !!state?.enabledBaseActions && state.canClose(tab);
       },
       getItems: (context, items) => [
         ...items,
@@ -99,7 +100,7 @@ export class TabsBootstrap extends Bootstrap {
         ACTION_TAB_CLOSE_ALL_TO_THE_RIGHT,
       ],
       orderItems: (context, items) => {
-        const actions = menuExtractActions(items, [
+        const actions = menuExtractItems(items, [
           ACTION_TAB_CLOSE,
           ACTION_TAB_CLOSE_ALL,
           ACTION_TAB_CLOSE_OTHERS,
@@ -118,6 +119,4 @@ export class TabsBootstrap extends Bootstrap {
       },
     });
   }
-
-  load(): void | Promise<void> { }
 }

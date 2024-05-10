@@ -1,12 +1,18 @@
 mutation closeConnection(
-  $id: ID!,
-
-  $includeOrigin: Boolean!,
-  $customIncludeOriginDetails: Boolean!,
-  $includeAuthProperties: Boolean!,
-  $customIncludeNetworkHandlerCredentials: Boolean!
+  $projectId: ID!
+  $connectionId: ID!
+  $includeOrigin: Boolean!
+  $customIncludeOriginDetails: Boolean!
+  $includeAuthProperties: Boolean!
+  $includeNetworkHandlersConfig: Boolean!
+  $includeCredentialsSaved: Boolean!
+  $includeAuthNeeded: Boolean!
+  $includeProperties: Boolean!
+  $includeProviderProperties: Boolean!
+  $includeSharedSecrets: Boolean!
+  $customIncludeOptions: Boolean!
 ) {
-  connection: closeConnection(id: $id) {
+  connection: closeConnection(projectId: $projectId, id: $connectionId) {
     ...DatabaseConnection
   }
 }

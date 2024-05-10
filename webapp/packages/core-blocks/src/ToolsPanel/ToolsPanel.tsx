@@ -1,30 +1,36 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { observer } from 'mobx-react-lite';
 
-import styled, { css } from 'reshadow';
+import { s } from '../s';
+import { useS } from '../useS';
+import style from './ToolsPanel.m.css';
 
-import { useStyles } from '@cloudbeaver/core-theming';
-
-const styles = css`
-  container {
-    height: 48px;
-    display: flex;
-  }
-`;
-
+type TType = 'primary' | 'secondary';
 interface Props {
   className?: string;
+  type?: TType;
+  center?: boolean;
+  rounded?: boolean;
+  fixedHeight?: boolean;
+  bottomBorder?: boolean;
 }
 
-export const ToolsPanel: React.FC<Props> = function ToolsPanel({ className, children }) {
-  return styled(useStyles(styles))(
-    <container className={className}>
-      {children}
-    </container>
-  );
-};
+export const ToolsPanel: React.FC<React.PropsWithChildren<Props>> = observer(function ToolsPanel({
+  className,
+  children,
+  center,
+  rounded,
+  fixedHeight,
+  type = 'primary',
+  bottomBorder = false,
+}) {
+  const styles = useS(style);
+
+  return <div className={s(styles, { toolsPanel: true, [type]: true, bottomBorder, fixedHeight, center, rounded }, className)}>{children}</div>;
+});

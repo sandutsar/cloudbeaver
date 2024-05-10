@@ -1,20 +1,20 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { observable, makeObservable, action } from 'mobx';
+import { action, makeObservable, observable } from 'mobx';
 
 import { AdministrationScreenService } from '@cloudbeaver/core-administration';
+import { ConnectionInfoResource } from '@cloudbeaver/core-connections';
 import { injectable } from '@cloudbeaver/core-di';
+import { ProjectInfoResource, ProjectsService } from '@cloudbeaver/core-projects';
 import type { ConnectionConfig } from '@cloudbeaver/core-sdk';
 import { TabsContainer } from '@cloudbeaver/core-ui';
 import { ConnectionFormService, ConnectionFormState, IConnectionFormState } from '@cloudbeaver/plugin-connections';
 
-import { ConnectionsResource } from '../ConnectionsResource';
 import { ConnectionsAdministrationNavService } from './ConnectionsAdministrationNavService';
 
 export interface ICreateMethodOptions {
@@ -35,10 +35,12 @@ export class CreateConnectionService {
     private readonly connectionsAdministrationNavService: ConnectionsAdministrationNavService,
     private readonly administrationScreenService: AdministrationScreenService,
     private readonly connectionFormService: ConnectionFormService,
-    private readonly connectionsResource: ConnectionsResource
+    private readonly connectionInfoResource: ConnectionInfoResource,
+    private readonly projectsService: ProjectsService,
+    private readonly projectInfoResource: ProjectInfoResource,
   ) {
     this.data = null;
-    this.tabsContainer = new TabsContainer();
+    this.tabsContainer = new TabsContainer('Connection Creation mode');
 
     this.setConnectionTemplate = this.setConnectionTemplate.bind(this);
     this.clearConnectionTemplate = this.clearConnectionTemplate.bind(this);
@@ -106,15 +108,14 @@ export class CreateConnectionService {
     this.activateMethod(defaultId);
   }
 
-  setConnectionTemplate(config: ConnectionConfig, availableDrivers: string[]): void {
-    this.data = new ConnectionFormState(
-      this.connectionFormService,
-      this.connectionsResource
-    );
+  setConnectionTemplate(projectId: string, config: ConnectionConfig, availableDrivers: string[]): void {
+    this.data = new ConnectionFormState(this.projectsService, this.projectInfoResource, this.connectionFormService, this.connectionInfoResource);
+
+    this.data.closeTask.addHandler(this.cancelCreate.bind(this));
 
     this.data
       .setOptions('create', 'admin')
-      .setConfig(config)
+      .setConfig(projectId, config)
       .setAvailableDrivers(availableDrivers || []);
 
     this.data.load();

@@ -16,9 +16,6 @@
 *.ear
 *.rar
 
-# editor files
-.vscode
-
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 
@@ -31,11 +28,19 @@ dist/
 /idea/
 .idea/
 
+## Mac OS
+.DS_Store
+
+## tests
+server/test/io.cloudbeaver.test.platform/workspace/.data/
+
 ## Eclipse configs
 
 .project
 .classpath
 .settings/
 
+workspace-dev-ce/
 deploy/cloudbeaver
 server/**/target
+apps/**/target

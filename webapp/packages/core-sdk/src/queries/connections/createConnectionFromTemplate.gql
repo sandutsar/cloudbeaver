@@ -1,13 +1,19 @@
 mutation createConnectionFromTemplate(
-  $templateId: ID!,
-  $connectionName: String!,
-
-  $includeOrigin: Boolean!,
-  $customIncludeOriginDetails: Boolean!,
-  $includeAuthProperties: Boolean!,
-  $customIncludeNetworkHandlerCredentials: Boolean!
+  $projectId: ID!
+  $templateId: ID!
+  $connectionName: String!
+  $includeOrigin: Boolean!
+  $customIncludeOriginDetails: Boolean!
+  $includeAuthProperties: Boolean!
+  $includeNetworkHandlersConfig: Boolean!
+  $includeCredentialsSaved: Boolean!
+  $includeAuthNeeded: Boolean!
+  $includeProperties: Boolean!
+  $includeProviderProperties: Boolean!
+  $includeSharedSecrets: Boolean!
+  $customIncludeOptions: Boolean!
 ) {
-  connection: createConnectionFromTemplate(templateId: $templateId, connectionName: $connectionName) {
+  connection: createConnectionFromTemplate(projectId: $projectId, templateId: $templateId, connectionName: $connectionName) {
     ...DatabaseConnection
   }
 }

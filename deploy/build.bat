@@ -17,16 +17,20 @@ mkdir cloudbeaver\conf
 mkdir cloudbeaver\workspace
 mkdir cloudbeaver\web
 
+echo Pull cloudbeaver platform
+
+cd ..\..
+
 echo Pull dbeaver platform
 
-cd ../..
 IF NOT EXIST dbeaver git clone https://github.com/dbeaver/dbeaver.git
+IF NOT EXIST dbeaver-common git clone https://github.com/dbeaver/dbeaver-common.git
 cd cloudbeaver\deploy
 
 echo Build cloudbeaver server
 
 cd ..\server\product\aggregate
-call mvn clean package -Dheadless-platform
+call mvn clean verify -Dheadless-platform
 
 cd ..\..\..\deploy
 
@@ -48,11 +52,13 @@ move drivers cloudbeaver >NUL
 
 echo Build static content
 
-cd ..\webapp
+cd ..\
+
+cd ..\cloudbeaver\webapp
 
 call yarn
-call lerna bootstrap
-call lerna run build --no-bail --stream --scope=@cloudbeaver/product-default &::-- -- --env source-map
+call yarn lerna bootstrap
+call yarn lerna run bundle --no-bail --stream --scope=@cloudbeaver/product-default &::-- -- --env source-map
 
 cd ..\deploy
 

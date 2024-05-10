@@ -1,171 +1,141 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useState } from 'react';
-import styled, { css, use } from 'reshadow';
+import { HTMLAttributes, useState } from 'react';
 
-import { ComponentStyle, useStyles } from '@cloudbeaver/core-theming';
+import { isNotNullDefined } from '@cloudbeaver/core-utils';
 
-import { IconButton } from '../IconButton';
+import { ActionIconButton } from '../ActionIconButton';
+import { Container } from '../Containers/Container';
+import type { IContainerProps } from '../Containers/IContainerProps';
+import { s } from '../s';
 import { useFocus } from '../useFocus';
-import { InputField } from './InputField';
+import { useS } from '../useS';
+import filterStyle from './Filter.m.css';
+import { InputField } from './InputField/InputField';
 
-const filterStyles = css`
-  filter-container {
-    position: relative;
-    min-width: 24px;
-    min-height: 24px;
-  }
-  InputField {
-    display: none;
-    width: 300px;
-    &[|max] {
-      width: 100%;
-    }
-    &[|toggled] {
-      display: block;
-    }
-  }
-  IconButton {
-    position: absolute;
-    right: 0;
-    top: 0;
-    margin: 0;
-    width: 24px;
-    height: 24px;
-    border-radius: 2px;
-    cursor: auto;
-
-    &[|toggled] {
-      right: 4px;
-      top: 4px;
-    }
-  }
-`;
-
-const toggleModeButtonStyle = css`
-    IconButton {
-      composes: theme-background-primary theme-text-on-primary from global;
-      cursor: pointer;
-    }
-`;
-
-const innerInputStyle = css`
-  input {
-    padding-right: 40px !important;
-  }
-`;
-
-interface BaseProps {
-  toggleMode?: boolean;
+interface BaseProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onChange'>, IContainerProps {
   placeholder?: string;
   disabled?: boolean;
-  max?: boolean;
+  disabledActions?: boolean;
+  manualApply?: boolean;
+  smallSize?: boolean;
+  onChange?: (value: string) => void;
+  onSearch?: (value: string) => void;
   className?: string;
-  style?: ComponentStyle;
-  onToggle?: (status: boolean) => void;
-  onKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
-  onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 type ControlledProps = BaseProps & {
   name?: string;
   value?: string;
   state?: never;
-  onFilter?: (value: string, name?: string) => void;
+  onChange?: (value: string, name?: string) => void;
 };
 
 type ObjectsProps<TKey extends keyof TState, TState> = BaseProps & {
   name: TKey;
   state: TState;
   value?: never;
-  onFilter?: (value: TState[TKey], name: TKey) => void;
+  onChange?: (value: TState[TKey], name: TKey) => void;
 };
 
 export const Filter = observer<ControlledProps | ObjectsProps<any, any>>(function Filter({
   state,
   name,
   value: valueControlled,
-  toggleMode,
   placeholder,
   disabled,
-  max,
+  disabledActions,
   className,
-  style,
-  onFilter,
-  onToggle,
-  onKeyDown,
-  onClick,
+  manualApply,
+  smallSize,
+  onSearch,
+  onChange,
+  ...rest
 }) {
-  const styles = useStyles(filterStyles, style, toggleMode && toggleModeButtonStyle);
-  const [inputRef, ref] = useFocus<HTMLInputElement>({});
-  const [toggled, setToggled] = useState(!toggleMode);
+  const styles = useS(filterStyle);
+  const [inputRef] = useFocus<HTMLInputElement>({});
 
-  const filter = useCallback((value: string | number, name?: string) => {
+  let valuePassedFromProps = isNotNullDefined(valueControlled);
+  let value: any = valueControlled;
+
+  if (state && name !== undefined && name in state) {
+    value = state[name];
+    valuePassedFromProps = true;
+  }
+
+  value = String(value ?? '');
+
+  const [search, setSearch] = useState(value);
+
+  if (!valuePassedFromProps) {
+    value = search;
+  }
+
+  function handleChange(value: string | number) {
     value = String(value);
 
     if (state && name) {
       state[name] = value;
     }
 
-    if (onFilter) {
-      onFilter(value, name);
-    }
-  }, [onFilter, state]);
-
-  const toggle = useCallback(() => {
-    if (!toggleMode) {
-      return;
+    if (onChange) {
+      onChange(value, name);
     }
 
-    if (toggled) {
-      filter('');
-    }
-
-    setToggled(!toggled);
-
-    if (onToggle) {
-      onToggle(!toggled);
-    }
-  }, [toggleMode, toggled, onToggle, filter]);
-
-  useEffect(() => {
-    if (toggled && toggleMode) {
-      ref.reference?.focus();
-    }
-  }, [toggled, toggleMode, ref.reference]);
-
-  let value: any = valueControlled;
-
-  if (state && name !== undefined && name in state) {
-    value = state[name];
+    setSearch(value);
   }
 
-  return styled(styles)(
-    <filter-container className={className} onClick={onClick}>
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter' && !disabledActions && !disabled) {
+      onSearch?.(value);
+    }
+  }
+
+  function handleClear() {
+    handleChange('');
+    onSearch?.('');
+  }
+
+  function searchHandler() {
+    onSearch?.(value);
+  }
+
+  const edited = !!String(value);
+
+  return (
+    <Container {...rest} className={s(styles, { filterContainer: true, smallSize }, className)}>
       <InputField
         ref={inputRef}
-        style={[innerInputStyle, style]}
+        type="search"
+        autoComplete="off"
+        className={s(styles, { inputField: true })}
         placeholder={placeholder}
         disabled={disabled}
         name={name}
         value={value}
-        onChange={filter}
-        onKeyDown={onKeyDown}
-        {...use({ toggled, max })}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
       />
-      <IconButton
-        name='search'
-        disabled={disabled}
-        onClick={toggle}
-        {...use({ toggled })}
-      />
-    </filter-container>
+
+      <div className={s(styles, { actionButtons: true })}>
+        {edited && !manualApply ? (
+          <ActionIconButton name="cross" disabled={disabled || disabledActions} className={s(styles, { actionButton: true })} onClick={handleClear} />
+        ) : (
+          <ActionIconButton
+            name="search"
+            viewBox="4 4 16 16"
+            disabled={disabled || disabledActions}
+            className={s(styles, { actionButton: true })}
+            onClick={searchHandler}
+          />
+        )}
+      </div>
+    </Container>
   );
 });

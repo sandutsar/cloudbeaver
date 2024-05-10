@@ -13,22 +13,17 @@ fragment DatabaseDriver on DriverInfo {
   requiresServerName
   anonymousAccess
   promotedScore
+  providerId
+  driverClassName
+  custom
 
   defaultAuthModel
   applicableAuthModels
   applicableNetworkHandlers
+  configurationTypes
 
   providerProperties @include(if: $includeProviderProperties) {
-    id
-    displayName
-    description
-    category
-    dataType
-    defaultValue
-    validValues
-    length
-    features
-    order
+   ...DriverProviderPropertyInfo
   }
 
   driverProperties @include(if: $includeDriverProperties) {
@@ -41,4 +36,10 @@ fragment DatabaseDriver on DriverInfo {
     validValues
   }
   driverParameters @include(if: $includeDriverParameters)
+
+  driverLibraries @include(if: $includeDriverLibraries) {
+    id
+    name
+    icon
+  }
 }

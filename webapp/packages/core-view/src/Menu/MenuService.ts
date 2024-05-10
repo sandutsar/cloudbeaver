@@ -1,22 +1,22 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import type { IDataContextProvider } from '@cloudbeaver/core-data-context';
 import { injectable } from '@cloudbeaver/core-di';
+import { flat, ILoadableState, isNotNullDefined } from '@cloudbeaver/core-utils';
 
 import { ActionService } from '../Action/ActionService';
 import { isAction } from '../Action/createAction';
 import type { IAction } from '../Action/IAction';
-import type { IDataContextProvider } from '../DataContext/IDataContextProvider';
 import { isMenu } from './createMenu';
 import { DATA_CONTEXT_MENU } from './DATA_CONTEXT_MENU';
-import { DATA_CONTEXT_MENU_LOCAL } from './DATA_CONTEXT_MENU_LOCAL';
-import type { IMenuHandler } from './IMenuHandler';
-import type { IMenuItemsCreator, MenuCreatorItem } from './IMenuItemsCreator';
+import { DATA_CONTEXT_MENU_NESTED } from './DATA_CONTEXT_MENU_NESTED';
+import type { IMenuHandler, IMenuHandlerOptions } from './IMenuHandler';
+import type { IMenuItemsCreator, IMenuItemsCreatorOptions, MenuCreatorItem } from './IMenuItemsCreator';
 import type { IMenuActionItem } from './MenuItem/IMenuActionItem';
 import type { IMenuItem } from './MenuItem/IMenuItem';
 import { MenuActionItem } from './MenuItem/MenuActionItem';
@@ -24,12 +24,10 @@ import { MenuSubMenuItem } from './MenuItem/MenuSubMenuItem';
 
 @injectable()
 export class MenuService {
-  private readonly handlers: Map<string, IMenuHandler>;
+  private readonly handlers: Map<string, IMenuHandler<any>>;
   private readonly creators: IMenuItemsCreator[];
 
-  constructor(
-    private readonly actionService: ActionService,
-  ) {
+  constructor(private readonly actionService: ActionService) {
     this.creators = [];
     this.handlers = new Map();
   }
@@ -44,25 +42,42 @@ export class MenuService {
     return null;
   }
 
-  isMenuAvailable(context: IDataContextProvider): boolean {
-    return this.creators
-      .some(filterApplicable(context));
+  addCreator(creator: IMenuItemsCreatorOptions): void {
+    this.creators.push({
+      ...creator,
+      menus: new Set(creator.menus),
+      contexts: new Set(creator.contexts),
+    });
   }
 
-  addCreator(creator: IMenuItemsCreator): void {
-    this.creators.push(creator);
-  }
-
-  setHandler(handler: IMenuHandler): void {
+  setHandler<T = unknown>(handler: IMenuHandlerOptions<T>): void {
     if (this.handlers.has(handler.id)) {
       throw new Error(`Menu handler with same id (${handler.id}) already exists`);
     }
-    this.handlers.set(handler.id, handler);
+    this.handlers.set(handler.id, {
+      ...handler,
+      menus: new Set(handler.menus),
+      contexts: new Set(handler.contexts),
+    });
   }
 
-  getHandler(context: IDataContextProvider): IMenuHandler | null {
-    for (const handler of this.handlers.values()) {
-      if (handler.isApplicable(context)) {
+  getHandler(contexts: IDataContextProvider): IMenuHandler | null {
+    const menu = contexts.getOwn(DATA_CONTEXT_MENU);
+
+    handlers: for (const handler of this.handlers.values()) {
+      if (handler.menus.size > 0) {
+        if (!isNotNullDefined(menu) || !handler.menus.has(menu)) {
+          continue;
+        }
+      }
+      if (handler.contexts.size > 0) {
+        for (const context of handler.contexts) {
+          if (!contexts.has(context, true)) {
+            continue handlers;
+          }
+        }
+      }
+      if (handler.isApplicable?.(contexts) !== false) {
         return handler;
       }
     }
@@ -70,18 +85,36 @@ export class MenuService {
     return null;
   }
 
-  getMenu(context: IDataContextProvider): IMenuItem[] {
-    const applicableCreators = this.creators.filter(filterApplicable(context));
+  getMenuItemLoaders(context: IDataContextProvider, itemCreators: MenuCreatorItem[]): ILoadableState[] {
+    return flat(
+      itemCreators.map(item => {
+        if (isAction(item)) {
+          const handler = this.actionService.getHandler(context, item);
 
-    return applicableCreators
-      .reduce<MenuCreatorItem[]>(
+          return handler?.getLoader?.(context, item) ?? null;
+        }
+
+        return null;
+      }),
+    ).filter<ILoadableState>((item => item !== null) as (obj: any) => obj is ILoadableState);
+  }
+
+  getMenuItemCreators(context: IDataContextProvider): MenuCreatorItem[] {
+    const creators = this.creators.filter(filterApplicable(context));
+
+    return creators.reduce<MenuCreatorItem[]>(
       (items, creator) => {
         if (creator.orderItems) {
-          return creator.orderItems(context, items);
+          return creator.orderItems(context, [...items]).filter(item => {
+            if (isAction(item)) {
+              return items.includes(item);
+            }
+            return true;
+          });
         }
         return items;
       },
-      applicableCreators
+      creators
         .reduce<MenuCreatorItem[]>((items, creator) => creator.getItems(context, items), [])
         .filter(item => {
           if (isAction(item)) {
@@ -89,14 +122,18 @@ export class MenuService {
           }
 
           return true;
-        })
-    )
+        }),
+    );
+  }
+
+  getMenu(context: IDataContextProvider, itemCreators: MenuCreatorItem[]): IMenuItem[] {
+    return itemCreators
       .map(item => {
         if (isAction(item)) {
           return this.createActionItem(context, item) as IMenuItem;
         }
         if (isMenu(item)) {
-          return new MenuSubMenuItem(item) as IMenuItem;
+          return new MenuSubMenuItem({ menu: item }) as IMenuItem;
         }
         return item;
       })
@@ -105,33 +142,30 @@ export class MenuService {
 }
 
 function filterApplicable(contexts: IDataContextProvider): (creator: IMenuItemsCreator) => boolean {
-  const local = contexts.get(DATA_CONTEXT_MENU_LOCAL);
+  const menu = contexts.getOwn(DATA_CONTEXT_MENU);
 
   return (creator: IMenuItemsCreator) => {
-    if (local) {
-      if (!creator.menus && !creator.contexts) {
+    if (creator.root && contexts.has(DATA_CONTEXT_MENU_NESTED)) {
+      return false;
+    }
+    if (creator.menus.size > 0) {
+      if (!isNotNullDefined(menu) || !creator.menus.has(menu)) {
         return false;
       }
+    }
 
-      if (creator.menus) {
-        const applicable = creator.menus.some(menu => contexts.find(DATA_CONTEXT_MENU, menu));
-
-        if (!applicable) {
+    if (creator.contexts.size > 0) {
+      for (const context of creator.contexts) {
+        if (!contexts.has(context, true)) {
           return false;
         }
       }
+    }
 
-      if (creator.contexts) {
-        const applicable = creator.contexts.some(context => contexts.has(context));
-
-        if (!applicable) {
-          return false;
-        }
-      }
-    } else if (creator.menus || creator.contexts) {
+    if (creator.isApplicable?.(contexts) === false) {
       return false;
     }
 
-    return creator.isApplicable?.(contexts) ?? true;
+    return true;
   };
 }

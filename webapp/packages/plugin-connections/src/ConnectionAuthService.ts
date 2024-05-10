@@ -1,95 +1,100 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { AuthProviderService } from '@cloudbeaver/core-authentication';
-import { Connection, ConnectionInfoResource, ConnectionsManagerService } from '@cloudbeaver/core-connections';
-import { injectable } from '@cloudbeaver/core-di';
-import { CommonDialogService } from '@cloudbeaver/core-dialogs';
-import { NotificationService } from '@cloudbeaver/core-events';
+import { importLazyComponent } from '@cloudbeaver/core-blocks';
+import {
+  Connection,
+  ConnectionInfoResource,
+  ConnectionsManagerService,
+  createConnectionParam,
+  IConnectionInfoParams,
+  IRequireConnectionExecutorData,
+} from '@cloudbeaver/core-connections';
+import { Dependency, injectable } from '@cloudbeaver/core-di';
+import { CommonDialogService, DialogueStateResult } from '@cloudbeaver/core-dialogs';
 import type { IExecutionContextProvider } from '@cloudbeaver/core-executor';
+import { AuthenticationService } from '@cloudbeaver/plugin-authentication';
 
-import { DatabaseAuthDialog } from './DatabaseAuthDialog/DatabaseAuthDialog';
+const DatabaseAuthDialog = importLazyComponent(() => import('./DatabaseAuthDialog/DatabaseAuthDialog').then(m => m.DatabaseAuthDialog));
 
 @injectable()
-export class ConnectionAuthService {
+export class ConnectionAuthService extends Dependency {
   constructor(
     private readonly connectionInfoResource: ConnectionInfoResource,
     private readonly commonDialogService: CommonDialogService,
     private readonly authProviderService: AuthProviderService,
     private readonly connectionsManagerService: ConnectionsManagerService,
-    private readonly notificationService: NotificationService,
+    private readonly authenticationService: AuthenticationService,
   ) {
+    super();
+
     connectionsManagerService.connectionExecutor.addHandler(this.connectionDialog.bind(this));
+    this.authenticationService.onLogout.before(connectionsManagerService.onDisconnect, state => ({
+      connections: connectionInfoResource.values.filter(connection => connection.connected).map(createConnectionParam),
+      state,
+    }));
   }
 
-  private async connectionDialog(connectionId: string | null, context: IExecutionContextProvider<string | null>) {
+  private async connectionDialog(data: IRequireConnectionExecutorData, context: IExecutionContextProvider<IRequireConnectionExecutorData | null>) {
     const connection = context.getContext(this.connectionsManagerService.connectionContext);
 
-    if (!connectionId) {
-      if (!this.connectionsManagerService.hasAnyConnection()) {
-        return;
-      }
-      connectionId = this.connectionInfoResource.values[0].id;
-    }
+    const newConnection = await this.auth(data.key, data.resetCredentials);
 
-    try {
-      const tempConnection = await this.auth(connectionId);
-
-      if (!tempConnection?.connected) {
-        return;
-      }
-      connection.connection = tempConnection;
-    } catch (exception: any) {
-      this.notificationService.logException(exception);
-      throw exception;
+    if (!newConnection?.connected) {
+      return;
     }
+    connection.connection = newConnection;
   }
 
-  async auth(connectionId: string): Promise<Connection | null> {
-    if (!this.connectionInfoResource.has(connectionId)) {
+  private async auth(key: IConnectionInfoParams, resetCredentials?: boolean): Promise<Connection | null> {
+    if (!this.connectionInfoResource.has(key)) {
       return null;
     }
 
-    let connection = this.connectionInfoResource.get(connectionId);
+    let connection = await this.connectionInfoResource.load(key);
+    const isConnectedInitially = connection?.connected;
 
-    if (!connection?.connected) {
-      connection = await this.connectionInfoResource.refresh(connectionId);
-    } else {
-      return connection;
+    if (connection?.connected) {
+      if (resetCredentials) {
+        this.connectionInfoResource.close(key);
+      } else {
+        return connection;
+      }
     }
 
-    if (connection.connected) {
-      return connection;
-    }
-
-    if (connection.origin) {
-      const state = await this.authProviderService.requireProvider(connection.origin);
+    if (connection.requiredAuth) {
+      const state = await this.authProviderService.requireProvider(connection.requiredAuth);
 
       if (!state) {
         return connection;
       }
     }
 
-    connection = await this.connectionInfoResource.load(connectionId);
+    connection = await this.connectionInfoResource.load(key, ['includeAuthNeeded', 'includeNetworkHandlersConfig', 'includeCredentialsSaved']);
 
-    const networkHandlers = connection.networkHandlersConfig
-      .filter(handler => handler.enabled && !handler.savePassword)
+    const networkHandlers = connection
+      .networkHandlersConfig!.filter(handler => handler.enabled && (!handler.savePassword || resetCredentials))
       .map(handler => handler.id);
 
-    if (connection.authNeeded || networkHandlers.length > 0) {
-      await this.commonDialogService.open(DatabaseAuthDialog, {
-        connectionId,
+    if (connection.authNeeded || (connection.credentialsSaved && resetCredentials) || networkHandlers.length > 0) {
+      const result = await this.commonDialogService.open(DatabaseAuthDialog, {
+        connection: key,
         networkHandlers,
+        resetCredentials,
       });
+
+      if (resetCredentials && isConnectedInitially && result === DialogueStateResult.Rejected) {
+        await this.connectionInfoResource.init(key);
+      }
     } else {
-      await this.connectionInfoResource.init({ id: connectionId });
+      await this.connectionInfoResource.init({ projectId: key.projectId, connectionId: key.connectionId });
     }
 
-    return this.connectionInfoResource.get(connectionId)!;
+    return this.connectionInfoResource.get(key)!;
   }
 }

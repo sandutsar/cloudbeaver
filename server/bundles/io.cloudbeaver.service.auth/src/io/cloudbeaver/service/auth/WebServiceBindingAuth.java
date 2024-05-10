@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,16 +39,27 @@ public class WebServiceBindingAuth extends WebServiceBindingBase<DBWServiceAuth>
             .dataFetcher("authLogin", env -> getService(env).authLogin(
                 getWebSession(env, false),
                 env.getArgument("provider"),
+                env.getArgument("configuration"),
                 env.getArgument("credentials"),
-                CommonUtils.toBoolean(env.getArgument("linkUser"))))
+                CommonUtils.toBoolean(env.getArgument("linkUser")),
+                CommonUtils.toBoolean(env.getArgument("forceSessionsLogout"))
+            ))
+            .dataFetcher("authLogoutExtended", env -> getService(env).authLogout(
+                getWebSession(env, false),
+                env.getArgument("provider"),
+                env.getArgument("configuration")
+            ))
             .dataFetcher("authLogout", env -> {
-                getService(env).authLogout(getWebSession(env), env.getArgument("provider"));
+                getService(env).authLogout(getWebSession(env, false),
+                    env.getArgument("provider"),
+                    env.getArgument("configuration"));
                 return true;
             })
-            .dataFetcher("tryFederatedLogin", env -> {
-                getService(env).tryFederatedLogin(getWebSession(env), env.getArgument("provider"));
-                return true;
-            })
+            .dataFetcher("authUpdateStatus", env -> getService(env).authUpdateStatus(
+                getWebSession(env),
+                env.getArgument("authId"),
+                CommonUtils.toBoolean(env.getArgument("linkUser"))
+            ))
             .dataFetcher("activeUser", env -> getService(env).activeUser(getWebSession(env, false)))
             .dataFetcher("authProviders", env -> getService(env).getAuthProviders())
             .dataFetcher("authChangeLocalPassword", env -> getService(env).changeLocalPassword(
@@ -64,6 +75,9 @@ public class WebServiceBindingAuth extends WebServiceBindingBase<DBWServiceAuth>
                 env -> getService(env).setUserConfigurationParameter(getWebSession(env),
                     env.getArgument("name"),
                     env.getArgument("value")))
+            .dataFetcher("setUserPreferences",
+                env -> getService(env).setUserConfigurationParameters(getWebSession(env),
+                    env.getArgument("preferences")))
         ;
     }
 }

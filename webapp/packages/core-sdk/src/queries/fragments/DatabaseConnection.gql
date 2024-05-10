@@ -1,26 +1,34 @@
 fragment DatabaseConnection on ConnectionInfo {
   id
+  projectId
   name
   description
   driverId
+  keepAliveInterval
 
   template
   connected
-  provided
-  useUrl
   readOnly
+
   saveCredentials
+  credentialsSaved @include(if: $includeCredentialsSaved)
+  sharedCredentials
 
   folder
   nodePath
 
-  host
-  port
-  serverName
-  databaseName
-  url
-  properties
-  providerProperties
+  configurationType @include(if: $customIncludeOptions)
+  useUrl @include(if: $customIncludeOptions)
+  host @include(if: $customIncludeOptions)
+  port @include(if: $customIncludeOptions)
+  serverName @include(if: $customIncludeOptions)
+  databaseName @include(if: $customIncludeOptions)
+  url @include(if: $customIncludeOptions)
+
+  properties @include(if: $includeProperties)
+  providerProperties @include(if: $includeProviderProperties)
+
+  requiredAuth
 
   features
   supportedDataFormats
@@ -29,25 +37,37 @@ fragment DatabaseConnection on ConnectionInfo {
     ...ObjectOriginInfo
   }
 
-  authNeeded
+  sharedSecrets @include(if: $includeSharedSecrets) {
+    displayName
+    secretId
+  }
+  authNeeded @include(if: $includeAuthNeeded)
   authModel
 
   authProperties @include(if: $includeAuthProperties) {
     ...UserConnectionAuthProperties
   }
 
-  networkHandlersConfig {
-    id
-    enabled
+  networkHandlersConfig @skip(if: $includeNetworkHandlersConfig) {
+    ...NetworkHandlerBasics
+  }
+
+  networkHandlersConfig @include(if: $includeNetworkHandlersConfig) {
+    ...NetworkHandlerBasics
     authType
-    userName @include(if: $customIncludeNetworkHandlerCredentials)
-    password @include(if: $customIncludeNetworkHandlerCredentials)
-    key @include(if: $customIncludeNetworkHandlerCredentials)
+    userName
+    password
+    key
     savePassword
-    properties @include(if: $customIncludeNetworkHandlerCredentials)
+    properties
+    secureProperties
   }
 
   navigatorSettings {
     ...AllNavigatorSettings
   }
+
+  canViewSettings
+  canEdit
+  canDelete
 }

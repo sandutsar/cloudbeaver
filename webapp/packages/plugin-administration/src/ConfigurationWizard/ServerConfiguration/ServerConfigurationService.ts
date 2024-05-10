@@ -1,19 +1,18 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { observable, makeObservable } from 'mobx';
+import { makeObservable, observable } from 'mobx';
 
 import { AdministrationScreenService } from '@cloudbeaver/core-administration';
 import { ActionSnackbar, ActionSnackbarProps, PlaceholderContainer } from '@cloudbeaver/core-blocks';
 import { DEFAULT_NAVIGATOR_VIEW_SETTINGS } from '@cloudbeaver/core-connections';
 import { injectable } from '@cloudbeaver/core-di';
 import { ENotificationType, INotification, NotificationService } from '@cloudbeaver/core-events';
-import { IExecutor, Executor, IExecutorHandler, ExecutorInterrupter } from '@cloudbeaver/core-executor';
+import { Executor, ExecutorInterrupter, IExecutor, IExecutorHandler } from '@cloudbeaver/core-executor';
 import { ServerConfigResource, SessionDataResource } from '@cloudbeaver/core-root';
 
 import { ADMINISTRATION_SERVER_CONFIGURATION_ITEM } from './ADMINISTRATION_SERVER_CONFIGURATION_ITEM';
@@ -45,7 +44,7 @@ export class ServerConfigurationService {
   readonly saveTask: IExecutor<IServerConfigSaveData>;
   readonly validationTask: IExecutor<IServerConfigSaveData>;
   readonly configurationContainer: PlaceholderContainer<IConfigurationPlaceholderProps>;
-  readonly pluginsContainer: PlaceholderContainer;
+  readonly pluginsContainer: PlaceholderContainer<IConfigurationPlaceholderProps>;
 
   private done: boolean;
   private stateLinked: boolean;
@@ -55,7 +54,7 @@ export class ServerConfigurationService {
     private readonly administrationScreenService: AdministrationScreenService,
     private readonly serverConfigResource: ServerConfigResource,
     private readonly notificationService: NotificationService,
-    private readonly sessionDataResource: SessionDataResource
+    private readonly sessionDataResource: SessionDataResource,
   ) {
     this.done = false;
     this.loading = true;
@@ -78,25 +77,20 @@ export class ServerConfigurationService {
 
     this.loadConfigTask
       .next(this.validationTask, () => this.getSaveData(false))
-      .addHandler(() => { this.loading = true; })
+      .addHandler(() => {
+        this.loading = true;
+      })
       .addHandler(this.loadServerConfig)
       .addPostHandler(() => {
         this.loading = false;
         this.showUnsavedNotification(false);
       });
 
-    this.saveTask
-      .before(this.validationTask)
-      .before(this.prepareConfigTask)
-      .addPostHandler(this.save);
+    this.saveTask.before(this.validationTask).before(this.prepareConfigTask).addPostHandler(this.save);
 
-    this.validationTask
-      .addHandler(this.validateForm)
-      .addPostHandler(this.ensureValidation);
+    this.validationTask.addHandler(this.validateForm).addPostHandler(this.ensureValidation);
 
-    this.serverConfigResource
-      .onDataUpdate
-      .addPostHandler(this.showUnsavedNotification.bind(this, false));
+    this.serverConfigResource.onDataUpdate.addPostHandler(this.showUnsavedNotification.bind(this, false));
 
     this.administrationScreenService.activationEvent.addHandler(this.unlinkState.bind(this));
   }
@@ -113,21 +107,25 @@ export class ServerConfigurationService {
     }
   }
 
+  async activate(): Promise<void> {
+    // this.unSaveNotification?.close(true);
+    await this.loadConfig();
+  }
+
   async loadConfig(reset = false): Promise<void> {
     try {
       if (!this.stateLinked) {
-        this.state = this.administrationScreenService.getItemState(
-          'server-configuration',
-          () => {
-            reset = true;
-            return serverConfigStateContext();
-          }
-        );
+        this.state = this.administrationScreenService.getItemState('server-configuration', serverConfigStateContext);
+        reset = true;
+        this.stateLinked = true;
+        await this.serverConfigResource.load();
 
         this.serverConfigResource.setDataUpdate(this.state.serverConfig);
         this.serverConfigResource.setNavigatorSettingsUpdate(this.state.navigatorConfig);
 
-        this.stateLinked = true;
+        if (reset) {
+          this.serverConfigResource.resetUpdate();
+        }
       }
 
       await this.loadConfigTask.execute({
@@ -135,7 +133,7 @@ export class ServerConfigurationService {
         reset,
       });
     } catch (exception: any) {
-      this.notificationService.logException(exception, 'Can\'t load server configuration');
+      this.notificationService.logException(exception, "Can't load server configuration");
     }
   }
 
@@ -148,7 +146,7 @@ export class ServerConfigurationService {
 
     const validation = contexts.getContext(serverConfigValidationContext);
 
-    return validation.getState();
+    return validation.valid;
   }
 
   private readonly loadServerConfig: IExecutorHandler<ILoadConfigData> = async (data, contexts) => {
@@ -166,7 +164,7 @@ export class ServerConfigurationService {
       data.state.serverConfig.serverName = config.name || config.productInfo.name;
       data.state.serverConfig.serverURL = config.serverURL;
 
-      if (this.serverConfigResource.configurationMode) {
+      if (this.administrationScreenService.isConfigurationMode && !config.distributed) {
         data.state.serverConfig.serverURL = window.location.origin;
       }
 
@@ -180,7 +178,7 @@ export class ServerConfigurationService {
       Object.assign(data.state.navigatorConfig, config.defaultNavigatorSettings);
     } catch (exception: any) {
       ExecutorInterrupter.interrupt(contexts);
-      this.notificationService.logException(exception, 'Can\'t load server configuration');
+      this.notificationService.logException(exception, "Can't load server configuration");
     }
   };
 
@@ -195,7 +193,7 @@ export class ServerConfigurationService {
   private readonly save: IExecutorHandler<IServerConfigSaveData> = async (data, contexts) => {
     const validation = contexts.getContext(serverConfigValidationContext);
 
-    if (!validation.getState()) {
+    if (!validation.valid) {
       return;
     }
 
@@ -207,7 +205,7 @@ export class ServerConfigurationService {
         await this.sessionDataResource.refresh();
       }
     } catch (exception: any) {
-      this.notificationService.logException(exception, 'Can\'t save server configuration');
+      this.notificationService.logException(exception, "Can't save server configuration");
 
       throw exception;
     }
@@ -216,8 +214,18 @@ export class ServerConfigurationService {
   private readonly ensureValidation: IExecutorHandler<IServerConfigSaveData> = (data, contexts) => {
     const validation = contexts.getContext(serverConfigValidationContext);
 
-    if (!validation.getState()) {
+    if (!validation.valid) {
       ExecutorInterrupter.interrupt(contexts);
+
+      if (validation.messages.length > 0) {
+        this.notificationService.notify(
+          {
+            title: 'administration_configuration_wizard_step_validation_message',
+            message: validation.messages.join('\n'),
+          },
+          validation.valid ? ENotificationType.Info : ENotificationType.Error,
+        );
+      }
       this.done = false;
     } else {
       this.done = true;
@@ -244,26 +252,38 @@ export class ServerConfigurationService {
 
   private showUnsavedNotification(close: boolean) {
     if (
-      !this.serverConfigResource.isChanged()
-      && !this.serverConfigResource.isNavigatorSettingsChanged()
+      (!this.serverConfigResource.isChanged() && !this.serverConfigResource.isNavigatorSettingsChanged()) ||
+      this.administrationScreenService.activeScreen?.item === ADMINISTRATION_SERVER_CONFIGURATION_ITEM
     ) {
       this.unSaveNotification?.close(true);
       return;
     }
 
-    if (close || this.unSaveNotification || this.administrationScreenService.isConfigurationMode) {
+    if (
+      close ||
+      !this.stateLinked ||
+      this.unSaveNotification ||
+      this.administrationScreenService.isConfigurationMode
+      // || !this.administrationScreenService.isAdministrationPageActive
+    ) {
       return;
     }
 
-    this.unSaveNotification = this.notificationService.customNotification(() => ActionSnackbar, {
-      actionText: 'administration_configuration_wizard_configuration_server_info_unsaved_navigate',
-      onAction: () => this.administrationScreenService.navigateToItem(ADMINISTRATION_SERVER_CONFIGURATION_ITEM),
-    }, {
-      title: 'administration_configuration_wizard_configuration_server_info_unsaved_title',
-      message: 'administration_configuration_wizard_configuration_server_info_unsaved_message',
-      type: ENotificationType.Info,
-      onClose: () => { this.unSaveNotification = null; },
-    });
+    this.unSaveNotification = this.notificationService.customNotification(
+      () => ActionSnackbar,
+      {
+        actionText: 'administration_configuration_wizard_configuration_server_info_unsaved_navigate',
+        onAction: () => this.administrationScreenService.navigateToItem(ADMINISTRATION_SERVER_CONFIGURATION_ITEM),
+      },
+      {
+        title: 'administration_configuration_wizard_configuration_server_info_unsaved_title',
+        message: 'administration_configuration_wizard_configuration_server_info_unsaved_message',
+        type: ENotificationType.Info,
+        onClose: () => {
+          this.unSaveNotification = null;
+        },
+      },
+    );
   }
 
   private unlinkState(state: boolean): void {
@@ -278,21 +298,27 @@ export class ServerConfigurationService {
 }
 
 export interface IValidationStatusContext {
-  getState: () => boolean;
+  valid: boolean;
+  messages: string[];
   invalidate: () => void;
+  info: (message: string) => void;
+  error: (message: string) => void;
 }
 
 export function serverConfigValidationContext(): IValidationStatusContext {
-  let state = true;
-
-  const invalidate = () => {
-    state = false;
-  };
-  const getState = () => state;
-
   return {
-    getState,
-    invalidate,
+    valid: true,
+    messages: [],
+    invalidate() {
+      this.valid = false;
+    },
+    info(message: string) {
+      this.messages.push(message);
+    },
+    error(message: string) {
+      this.messages.push(message);
+      this.valid = false;
+    },
   };
 }
 

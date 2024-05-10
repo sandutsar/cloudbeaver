@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,9 @@ import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.data.DBDAttributeBinding;
 import org.jkiss.dbeaver.model.meta.Property;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * Web SQL query resultset.
  */
@@ -28,10 +31,14 @@ public class WebSQLQueryResultSet {
     private static final Log log = Log.getLog(WebSQLQueryResultSet.class);
 
     private WebSQLQueryResultColumn[] columns;
-    private Object[][] rows;
+    private List<WebSQLQueryResultSetRow> rows = Collections.emptyList();
     private boolean hasMoreData;
     private WebSQLResultsInfo resultsInfo;
     private boolean singleEntity = true;
+    private boolean hasRowIdentifier;
+
+    private boolean hasChildrenCollection;
+    private boolean isSupportsDataFilter;
 
     public WebSQLQueryResultSet() {
     }
@@ -59,11 +66,17 @@ public class WebSQLQueryResultSet {
     }
 
     @Property
+    @Deprecated
     public Object[][] getRows() {
+        return rows.stream().map(WebSQLQueryResultSetRow::getData).toArray(x -> new Object[x][1]);
+    }
+
+    @Property
+    public List<WebSQLQueryResultSetRow> getRowsWithMetaData() {
         return rows;
     }
 
-    public void setRows(Object[][] rows) {
+    public void setRows(List<WebSQLQueryResultSetRow> rows) {
         this.rows = rows;
     }
 
@@ -93,4 +106,30 @@ public class WebSQLQueryResultSet {
         this.resultsInfo = resultsInfo;
     }
 
+    @Property
+    public boolean isHasRowIdentifier() {
+        return hasRowIdentifier;
+    }
+
+    public void setHasRowIdentifier(boolean hasRowIdentifier) {
+        this.hasRowIdentifier = hasRowIdentifier;
+    }
+
+    @Property
+    public boolean isHasChildrenCollection() {
+        return hasChildrenCollection;
+    }
+
+    public void setHasChildrenCollection(boolean hasSuCollection) {
+        this.hasChildrenCollection = hasSuCollection;
+    }
+
+    @Property
+    public boolean isSupportsDataFilter() {
+        return isSupportsDataFilter;
+    }
+
+    public void setSupportsDataFilter(boolean supportsDataFilter) {
+        isSupportsDataFilter = supportsDataFilter;
+    }
 }

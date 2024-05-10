@@ -1,138 +1,92 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import React, { ButtonHTMLAttributes, useCallback, useEffect } from 'react';
-import { MenuButton, MenuInitialState, useMenuState } from 'reakit/Menu';
-import styled from 'reshadow';
+import { forwardRef, useRef, useState } from 'react';
 
-import { getComputed, useObjectRef } from '@cloudbeaver/core-blocks';
-import { useService } from '@cloudbeaver/core-di';
-import { ComponentStyle, useStyles } from '@cloudbeaver/core-theming';
-import { IMenuData, MenuService } from '@cloudbeaver/core-view';
+import { getComputed, IMenuState, Menu, useAutoLoad, useObjectRef, useTranslate } from '@cloudbeaver/core-blocks';
+import { MenuActionItem } from '@cloudbeaver/core-view';
 
+import type { IContextMenuProps } from './IContextMenuProps';
 import { MenuItemRenderer } from './MenuItemRenderer';
-import { MenuPanel } from './MenuPanel';
-import { menuPanelStyles } from './menuPanelStyles';
 
-interface IMenuProps {
-  loading: boolean;
-  disabled: boolean;
-}
+// TODO the click doesn't work for React components as children
+export const ContextMenu = observer<IContextMenuProps, HTMLButtonElement>(
+  forwardRef(function ContextMenu(
+    { mouseContextMenu, menu: menuData, disclosure, children, placement, visible, onVisibleSwitch, modal, rtl, ...props },
+    ref,
+  ) {
+    const translate = useTranslate();
+    const [menuVisible, setMenuVisible] = useState(false);
 
-type ContextMenuRenderingChildren = (props: IMenuProps) => React.ReactNode;
+    const handler = menuData.handler;
+    const hidden = getComputed(() => handler?.isHidden?.(menuData.context) || false);
+    const loading = getComputed(() => handler?.isLoading?.(menuData.context) || menuData.loaders.some(loader => loader.isLoading()) || false);
+    const disabled = getComputed(() => loading || handler?.isDisabled?.(menuData.context) || false);
+    const lazy = getComputed(() => !menuData.available || hidden);
 
-interface IContextMenuProps extends Omit<ButtonHTMLAttributes<any>, 'style'> {
-  menu: IMenuData;
-  style?: ComponentStyle;
-  disclosure?: boolean;
-  placement?: MenuInitialState['placement'];
-  modal?: boolean;
-  visible?: boolean;
-  rtl?: boolean;
-  children?: React.ReactNode | ContextMenuRenderingChildren;
-  onVisibleSwitch?: (visible: boolean) => void;
-}
+    const menu = useRef<IMenuState>();
 
-export const ContextMenu = observer<IContextMenuProps, ButtonHTMLAttributes<any>>(function ContextMenu({
-  menu: menuData,
-  disclosure,
-  children,
-  style,
-  placement,
-  visible,
-  onVisibleSwitch,
-  modal,
-  rtl,
-  ...props
-}, ref) {
-  const menuService = useService(MenuService);
+    useAutoLoad({ name: `${ContextMenu.name}(${menuData.menu.id})` }, menuData.loaders, !lazy, menuVisible);
 
-  const handler = getComputed(() => menuService.getHandler(menuData.context));
-  const hidden = getComputed(() => handler?.isHidden?.(menuData.context) || false);
-  const loading = getComputed(() => handler?.isLoading?.(menuData.context) || false);
-  const disabled = getComputed(() => loading || handler?.isDisabled?.(menuData.context) || false);
-  const lazy = getComputed(() => !menuData.available || hidden);
+    const handlers = useObjectRef(
+      () => ({
+        handleItemClose() {
+          menu.current?.hide();
+        },
+        hasBindings() {
+          return this.menuData.items.some(item => item instanceof MenuActionItem && item.action.binding !== null);
+        },
+        handleVisibleSwitch(visible: boolean) {
+          setMenuVisible(visible);
+          this.onVisibleSwitch?.(visible);
 
-  const propsRef = useObjectRef({ onVisibleSwitch, visible });
-  const menu = useMenuState({ modal, placement, visible, rtl });
-  const styles = useStyles(menuPanelStyles, style);
-
-  const handleItemClose = useCallback(() => {
-    menu.hide();
-  }, [menu]);
-
-  useEffect(() => {
-    propsRef.onVisibleSwitch?.(menu.visible);
-
-    if (menu.visible) {
-      handler?.handler?.(menuData.context);
-    }
-  }, [menu.visible]);
-
-  if (lazy) {
-    return null;
-  }
-
-  // TODO: fix type error
-  const renderingChildren: React.ReactNode  = typeof children === 'function'
-    ? (children as any)({ loading, disabled })
-    : children;
-
-  if (React.isValidElement(renderingChildren) && disclosure) {
-    return styled(styles)(
-      <>
-        <MenuButton ref={ref} {...menu} {...props} {...renderingChildren.props} disabled={disabled}>
-          {disclosureProps => React.cloneElement(renderingChildren, { ...disclosureProps, ...renderingChildren.props })}
-        </MenuButton>
-        <MenuPanel
-          menuData={menuData}
-          menu={menu}
-          style={style}
-          rtl={rtl}
-        >
-          {item => (
-            <MenuItemRenderer
-              key={item.id}
-              item={item}
-              menuData={menuData}
-              menu={menu}
-              style={style}
-              onItemClose={handleItemClose}
-            />
-          )}
-        </MenuPanel>
-      </>
+          if (visible) {
+            this.handler?.handler?.(this.menuData.context);
+          }
+        },
+      }),
+      { menuData, handler, onVisibleSwitch },
+      ['handleItemClose', 'hasBindings', 'handleVisibleSwitch'],
     );
-  }
 
-  return styled(styles)(
-    <>
-      <MenuButton {...menu} {...props} disabled={disabled}>
-        <box>{renderingChildren}</box>
-      </MenuButton>
-      <MenuPanel
-        menuData={menuData}
-        menu={menu}
-        style={style}
+    if (lazy) {
+      return null;
+    }
+
+    const renderingChildren: React.ReactNode = typeof children === 'function' ? children({ loading, disabled }) : children;
+
+    return (
+      <Menu
+        {...props}
+        ref={ref}
+        label={translate(menuData.menu.label)}
+        title={translate(menuData.menu.tooltip)}
+        items={() =>
+          menuData.items.map(
+            item =>
+              menu.current && (
+                <MenuItemRenderer key={item.id} item={item} menuData={menuData} rtl={rtl} modal={modal} onItemClose={handlers.handleItemClose} />
+              ),
+          )
+        }
         rtl={rtl}
+        menuRef={menu}
+        modal={modal}
+        visible={visible}
+        mouseContextMenu={mouseContextMenu}
+        placement={placement}
+        disabled={disabled}
+        disclosure={disclosure}
+        getHasBindings={handlers.hasBindings}
+        onVisibleSwitch={handlers.handleVisibleSwitch}
       >
-        {item => (
-          <MenuItemRenderer
-            key={item.id}
-            item={item}
-            menuData={menuData}
-            menu={menu}
-            style={style}
-            onItemClose={handleItemClose}
-          />
-        )}
-      </MenuPanel>
-    </>
-  );
-}, { forwardRef: true });
+        {renderingChildren}
+      </Menu>
+    );
+  }),
+);

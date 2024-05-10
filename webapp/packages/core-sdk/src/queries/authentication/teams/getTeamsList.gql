@@ -1,0 +1,5 @@
+query getTeamsList($teamId: ID, $includeMetaParameters: Boolean!) {
+  teams: listTeams(teamId: $teamId) {
+    ...AdminTeamInfo
+  } 
+}

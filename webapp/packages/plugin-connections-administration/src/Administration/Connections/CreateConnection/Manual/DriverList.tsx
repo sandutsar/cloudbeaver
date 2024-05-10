@@ -1,20 +1,18 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import { useState, useMemo } from 'react';
-import styled, { css } from 'reshadow';
+import { useMemo, useState } from 'react';
 
-import { ItemListSearch, ItemList, useFocus } from '@cloudbeaver/core-blocks';
+import { ItemList, ItemListSearch, s, useFocus, useS, useTranslate } from '@cloudbeaver/core-blocks';
 import type { DBDriver } from '@cloudbeaver/core-connections';
-import { useTranslate } from '@cloudbeaver/core-localization';
 
 import { Driver } from './Driver';
+import styles from './DriverList.m.css';
 
 interface Props {
   drivers: DBDriver[];
@@ -22,18 +20,11 @@ interface Props {
   onSelect: (driverId: string) => void;
 }
 
-const style = css`
-  div {
-    display: flex;
-    flex-direction: column;
-    overflow: auto;
-  }
-`;
-
 export const DriverList = observer<Props>(function DriverList({ drivers, className, onSelect }) {
   const [focusedRef] = useFocus<HTMLDivElement>({ focusFirstChild: true });
   const translate = useTranslate();
   const [search, setSearch] = useState('');
+  const style = useS(styles);
   const filteredDrivers = useMemo(() => {
     if (!search) {
       return drivers;
@@ -41,11 +32,13 @@ export const DriverList = observer<Props>(function DriverList({ drivers, classNa
     return drivers.filter(driver => driver.name?.toUpperCase().includes(search.toUpperCase()));
   }, [search, drivers]);
 
-  return styled(style)(
-    <div ref={focusedRef}>
+  return (
+    <div ref={focusedRef} className={s(style, { container: true })}>
       <ItemListSearch value={search} placeholder={translate('connections_driver_search_placeholder')} onChange={setSearch} />
       <ItemList className={className}>
-        {filteredDrivers.map(driver => <Driver key={driver.id} driver={driver} onSelect={onSelect} />)}
+        {filteredDrivers.map(driver => (
+          <Driver key={driver.id} driver={driver} onSelect={onSelect} />
+        ))}
       </ItemList>
     </div>
   );

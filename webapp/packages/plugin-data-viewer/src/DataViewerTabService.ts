@@ -1,16 +1,18 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { NavNodeManagerService, INodeNavigationData, ITab } from '@cloudbeaver/core-app';
+import { ConnectionInfoResource, ConnectionsManagerService, IConnectionExecutorData } from '@cloudbeaver/core-connections';
 import { injectable } from '@cloudbeaver/core-di';
 import { NotificationService } from '@cloudbeaver/core-events';
-import type { IExecutionContextProvider } from '@cloudbeaver/core-executor';
-import { DBObjectPageService, ObjectPage, ObjectViewerTabService, IObjectViewerTabState } from '@cloudbeaver/plugin-object-viewer';
+import { ExecutorInterrupter, IExecutionContextProvider } from '@cloudbeaver/core-executor';
+import { INodeNavigationData, NavNodeManagerService } from '@cloudbeaver/core-navigation-tree';
+import { resourceKeyList } from '@cloudbeaver/core-resource';
+import { ITab, NavigationTabsService } from '@cloudbeaver/plugin-navigation-tabs';
+import { DBObjectPageService, IObjectViewerTabState, isObjectViewerTab, ObjectPage, ObjectViewerTabService } from '@cloudbeaver/plugin-object-viewer';
 
 import { DataViewerPanel } from './DataViewerPage/DataViewerPanel';
 import { DataViewerTab } from './DataViewerPage/DataViewerTab';
@@ -27,6 +29,9 @@ export class DataViewerTabService {
     private readonly objectViewerTabService: ObjectViewerTabService,
     private readonly dbObjectPageService: DBObjectPageService,
     private readonly notificationService: NotificationService,
+    private readonly connectionsManagerService: ConnectionsManagerService,
+    private readonly navigationTabsService: NavigationTabsService,
+    private readonly connectionInfoResource: ConnectionInfoResource,
   ) {
     this.page = this.dbObjectPageService.register({
       key: 'data_viewer_data',
@@ -40,23 +45,50 @@ export class DataViewerTabService {
     });
   }
 
+  register() {
+    this.connectionsManagerService.onDisconnect.addHandler(this.disconnectHandler.bind(this));
+  }
+
   registerTabHandler(): void {
     this.navNodeManagerService.navigator.addHandler(this.navigationHandler.bind(this));
   }
 
+  private async disconnectHandler(data: IConnectionExecutorData, contexts: IExecutionContextProvider<IConnectionExecutorData>) {
+    const connectionsKey = resourceKeyList(data.connections);
+    if (data.state === 'before') {
+      const tabs = Array.from(
+        this.navigationTabsService.findTabs(
+          isObjectViewerTab(tab => {
+            if (!tab.handlerState.connectionKey) {
+              return false;
+            }
+            return this.connectionInfoResource.isIntersect(connectionsKey, tab.handlerState.connectionKey);
+          }),
+        ),
+      );
+
+      for (const tab of tabs) {
+        const canDisconnect = await this.handleTabCanClose(tab);
+
+        if (!canDisconnect) {
+          ExecutorInterrupter.interrupt(contexts);
+          return;
+        }
+      }
+    }
+  }
+
   private async navigationHandler(data: INodeNavigationData, contexts: IExecutionContextProvider<INodeNavigationData>) {
     try {
-      const {
-        nodeInfo,
-        tabInfo,
-        trySwitchPage,
-      } = await contexts.getContext(this.objectViewerTabService.objectViewerTabContext);
+      const { nodeInfo, tabInfo, initTab, trySwitchPage } = contexts.getContext(this.objectViewerTabService.objectViewerTabContext);
 
       const node = await this.navNodeManagerService.loadNode(nodeInfo);
 
       if (!this.navNodeManagerService.isNodeHasData(node)) {
         return;
       }
+
+      await initTab();
 
       if (tabInfo.isNewlyCreated) {
         trySwitchPage(this.page);
@@ -79,7 +111,7 @@ export class DataViewerTabService {
         await model.requestDataAction(() => {
           canClose = true;
         });
-      } catch { }
+      } catch {}
 
       return canClose;
     }

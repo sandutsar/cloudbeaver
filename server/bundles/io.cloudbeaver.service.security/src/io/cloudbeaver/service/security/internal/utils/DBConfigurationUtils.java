@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
  */
 package io.cloudbeaver.service.security.internal.utils;
 
-import io.cloudbeaver.service.security.internal.db.CBDatabaseConfig;
+import io.cloudbeaver.service.security.db.WebDatabaseConfig;
 import org.jkiss.code.Nullable;
 import org.jkiss.utils.CommonUtils;
 
@@ -37,7 +37,7 @@ public class DBConfigurationUtils {
     static final String PARAM_DB_POOL_MAX_CONNECTIONS_CONFIGURATION = "maxConnections";
     static final String PARAM_DB_POOL_VALIDATION_QUERY_CONFIGURATION = "validationQuery";
 
-    public static Map<String, Object> databaseConfigToMap(@Nullable CBDatabaseConfig databaseConfiguration) {
+    public static Map<String, Object> databaseConfigToMap(@Nullable WebDatabaseConfig databaseConfiguration) {
         Map<String, Object> res = new LinkedHashMap<>();
         if (databaseConfiguration == null) {
             return res;
@@ -58,8 +58,6 @@ public class DBConfigurationUtils {
             PARAM_DB_PW_CONFIGURATION,
             v -> databaseConfiguration.getPassword()
         );
-        res.put(PARAM_DB_CREATE_DATABASE_CONFIGURATION, databaseConfiguration.isCreateDatabase());
-        res.put(PARAM_DB_ALLOW_PUBLIC_ACCESS_CONFIGURATION, databaseConfiguration.isAllowPublicAccess());
         res.computeIfAbsent(
             PARAM_DB_INITIAL_DATA_CONFIGURATION_CONFIGURATION,
             v -> databaseConfiguration.getInitialDataConfiguration()
@@ -71,12 +69,12 @@ public class DBConfigurationUtils {
         return res;
     }
 
-    public static Map<String, Object> poolDatabaseConfigToMap(@Nullable CBDatabaseConfig databaseConfiguration) {
+    public static Map<String, Object> poolDatabaseConfigToMap(@Nullable WebDatabaseConfig databaseConfiguration) {
         Map<String, Object> res = new LinkedHashMap<>();
         if (databaseConfiguration == null) {
             return res;
         }
-        CBDatabaseConfig.Pool pool = databaseConfiguration.getPool();
+        WebDatabaseConfig.Pool pool = databaseConfiguration.getPool();
         if (pool == null) {
             return res;
         } else {

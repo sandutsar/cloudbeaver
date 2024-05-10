@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,14 @@ import io.cloudbeaver.model.app.WebApplication;
 import io.cloudbeaver.model.session.WebSession;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
+import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.app.DBPDataSourceRegistry;
+import org.jkiss.dbeaver.model.app.DBPProject;
 import org.jkiss.dbeaver.model.connection.DBPConnectionConfiguration;
 import org.jkiss.dbeaver.model.net.DBWHandlerConfiguration;
+import org.jkiss.dbeaver.model.net.ssh.SSHConstants;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.utils.CommonUtils;
 
@@ -35,6 +39,9 @@ import java.util.List;
 import java.util.Map;
 
 public class WebDataSourceUtils {
+
+    private static final Log log = Log.getLog(WebDataSourceUtils.class);
+
     private WebDataSourceUtils() {
     }
 
@@ -51,19 +58,62 @@ public class WebDataSourceUtils {
                 if (c != null) {
                     DBWHandlerConfiguration handlerCfg = configuration.getHandler(c.getId());
                     if (handlerCfg != null) {
-                        handlerCfg.setUserName(c.getUserName());
-                        handlerCfg.setPassword(c.getPassword());
+                        updateHandlerCredentials(handlerCfg, c);
                     }
                 }
             });
         }
     }
 
+    public static void updateHandlerConfig(DBWHandlerConfiguration handlerConfig, WebNetworkHandlerConfigInput cfgInput) {
+        if (cfgInput.isEnabled() != null) {
+            handlerConfig.setEnabled(cfgInput.isEnabled());
+        }
+        if (cfgInput.getProperties() != null) {
+            handlerConfig.setProperties(cfgInput.getProperties());
+        }
+
+        if (cfgInput.getAuthType() != null) {
+            handlerConfig.setProperty(SSHConstants.PROP_AUTH_TYPE,
+                CommonUtils.valueOf(SSHConstants.AuthType.class, cfgInput.getAuthType(), SSHConstants.AuthType.PASSWORD));
+        }
+        if (cfgInput.isSavePassword() != null) {
+            handlerConfig.setSavePassword(cfgInput.isSavePassword());
+        } else {
+            handlerConfig.setSavePassword(false);
+        }
+        if (cfgInput.getUserName() != null) {
+            handlerConfig.setUserName(cfgInput.getUserName());
+        }
+        if (cfgInput.getPassword() != null) {
+            handlerConfig.setPassword(cfgInput.getPassword());
+        }
+        setSecureProperties(handlerConfig, cfgInput, true);
+        if (cfgInput.getKey() != null) { // backward compatibility
+            handlerConfig.setSecureProperty(SSHConstants.PROP_KEY_VALUE, cfgInput.getKey());
+        }
+    }
+
+    private static void setSecureProperties(DBWHandlerConfiguration handlerConfig, WebNetworkHandlerConfigInput cfgInput, boolean ignoreNulls) {
+        var secureProperties = cfgInput.getSecureProperties();
+        if (secureProperties == null) {
+            return;
+        }
+        for (var pr : secureProperties.entrySet()) {
+            if (ignoreNulls && pr.getValue() == null) {
+                continue;
+            }
+            handlerConfig.setSecureProperty(pr.getKey(), pr.getValue());
+        }
+    }
+
     @Nullable
-    public static DBPDataSourceContainer getLocalOrGlobalDataSource(WebApplication application, WebSession webSession, String connectionId) throws DBWebException {
+    public static DBPDataSourceContainer getLocalOrGlobalDataSource(
+        WebApplication application, WebSession webSession, @Nullable String projectId, String connectionId
+    ) throws DBWebException {
         DBPDataSourceContainer dataSource = null;
         if (!CommonUtils.isEmpty(connectionId)) {
-            dataSource = webSession.getSingletonProject().getDataSourceRegistry().getDataSource(connectionId);
+            dataSource = webSession.getProjectById(projectId).getDataSourceRegistry().getDataSource(connectionId);
             if (dataSource == null && (webSession.hasPermission(DBWConstants.PERMISSION_ADMIN) || application.isConfigurationMode())) {
                 // If called for new connection in admin mode then this connection may absent in session registry yet
                 dataSource = getGlobalDataSourceRegistry().getDataSource(connectionId);
@@ -74,10 +124,33 @@ public class WebDataSourceUtils {
 
     @NotNull
     public static DBPDataSourceRegistry getGlobalDataSourceRegistry() throws DBWebException {
-        DBPDataSourceRegistry registry = DBWorkbench.getPlatform().getWorkspace().getDefaultDataSourceRegistry();
-        if (registry == null) {
-            throw new DBWebException("No activate data source registry");
+        DBPProject activeProject = DBWorkbench.getPlatform().getWorkspace().getActiveProject();
+        if (activeProject != null) {
+            return activeProject.getDataSourceRegistry();
         }
-        return registry;
+
+        throw new DBWebException("No activate data source registry");
+    }
+
+    public static void updateHandlerCredentials(DBWHandlerConfiguration handlerCfg, WebNetworkHandlerConfigInput webConfig) {
+        handlerCfg.setUserName(webConfig.getUserName());
+        handlerCfg.setPassword(webConfig.getPassword());
+        setSecureProperties(handlerCfg, webConfig, false);
+        handlerCfg.setSecureProperty(SSHConstants.PROP_KEY_VALUE, webConfig.getKey()); // backward compatibility
+    }
+
+
+    public static boolean disconnectDataSource(@NotNull WebSession webSession, @NotNull DBPDataSourceContainer dataSource) {
+        if (dataSource.isConnected()) {
+            try {
+                dataSource.disconnect(webSession.getProgressMonitor());
+                return true;
+            } catch (DBException e) {
+                log.error("Error closing connection", e);
+            }
+            // Disconnect in async mode?
+            //new DisconnectJob(connectionInfo.getDataSource()).schedule();
+        }
+        return false;
     }
 }

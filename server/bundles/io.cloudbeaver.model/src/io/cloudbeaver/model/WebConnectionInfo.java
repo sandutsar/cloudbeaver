@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,27 +16,37 @@
  */
 package io.cloudbeaver.model;
 
+import io.cloudbeaver.WebProjectImpl;
+import io.cloudbeaver.model.app.BaseWebAppConfiguration;
 import io.cloudbeaver.model.session.WebSession;
+import io.cloudbeaver.service.security.SMUtils;
 import io.cloudbeaver.service.sql.WebDataFormat;
-import io.cloudbeaver.utils.WebCommonUtils;
 import io.cloudbeaver.utils.CBModelConstants;
+import io.cloudbeaver.utils.WebAppUtils;
+import io.cloudbeaver.utils.WebCommonUtils;
+import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
+import org.jkiss.dbeaver.model.DBConstants;
 import org.jkiss.dbeaver.model.DBPDataSource;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.DBPDataSourceFolder;
+import org.jkiss.dbeaver.model.app.DBPProject;
 import org.jkiss.dbeaver.model.connection.DBPAuthModelDescriptor;
 import org.jkiss.dbeaver.model.connection.DBPConnectionConfiguration;
+import org.jkiss.dbeaver.model.connection.DBPDriverConfigurationType;
 import org.jkiss.dbeaver.model.impl.auth.AuthModelDatabaseNative;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.navigator.DBNBrowseSettings;
 import org.jkiss.dbeaver.model.navigator.DBNDataSource;
+import org.jkiss.dbeaver.model.preferences.DBPPropertyDescriptor;
 import org.jkiss.dbeaver.model.preferences.DBPPropertySource;
+import org.jkiss.dbeaver.model.rm.RMProjectPermission;
+import org.jkiss.dbeaver.model.runtime.DBRRunnableParametrized;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.utils.CommonUtils;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +54,8 @@ import java.util.stream.Collectors;
  */
 public class WebConnectionInfo {
 
+    private static final Log log = Log.getLog(WebConnectionInfo.class);
+    public static final String SECURED_VALUE = "********";
     private final WebSession session;
     private final DBPDataSourceContainer dataSourceContainer;
     private WebServerError connectError;
@@ -54,6 +66,7 @@ public class WebConnectionInfo {
 
     private transient Map<String, Object> savedAuthProperties;
     private transient List<WebNetworkHandlerConfigInput> savedNetworkCredentials;
+    private transient List<DBRRunnableParametrized<WebConnectionInfo>> closeListeners = null;
 
     public WebConnectionInfo(WebSession session, DBPDataSourceContainer ds) {
         this.session = session;
@@ -94,12 +107,18 @@ public class WebConnectionInfo {
 
     @Property
     public String getHost() {
-        return dataSourceContainer.getConnectionConfiguration().getHostName();
+        if (canViewReadOnlyConnections()) {
+            return dataSourceContainer.getConnectionConfiguration().getHostName();
+        }
+        return SECURED_VALUE;
     }
 
     @Property
     public String getPort() {
-        return dataSourceContainer.getConnectionConfiguration().getHostPort();
+        if (canViewReadOnlyConnections()) {
+            return dataSourceContainer.getConnectionConfiguration().getHostPort();
+        }
+        return SECURED_VALUE;
     }
 
     @Property
@@ -109,17 +128,26 @@ public class WebConnectionInfo {
 
     @Property
     public String getDatabaseName() {
-        return dataSourceContainer.getConnectionConfiguration().getDatabaseName();
+        if (canViewReadOnlyConnections()) {
+            return dataSourceContainer.getConnectionConfiguration().getDatabaseName();
+        }
+        return SECURED_VALUE;
     }
 
     @Property
     public String getUrl() {
-        return dataSourceContainer.getConnectionConfiguration().getUrl();
+        if (canViewReadOnlyConnections()) {
+            return dataSourceContainer.getConnectionConfiguration().getUrl();
+        }
+        return SECURED_VALUE;
     }
 
     @Property
     public Map<String, String> getProperties() {
-        return dataSourceContainer.getConnectionConfiguration().getProperties();
+        if (canViewReadOnlyConnections()) {
+            return dataSourceContainer.getConnectionConfiguration().getProperties();
+        }
+        return Collections.emptyMap();
     }
 
     @Property
@@ -153,6 +181,16 @@ public class WebConnectionInfo {
     }
 
     @Property
+    public boolean isCredentialsSaved() throws DBException {
+        return dataSourceContainer.isCredentialsSaved();
+    }
+
+    @Property
+    public boolean isSharedCredentials() {
+        return dataSourceContainer.isSharedCredentials();
+    }
+
+    @Property
     public String getFolder() {
         DBPDataSourceFolder folder = dataSourceContainer.getFolder();
         return folder == null ? null : folder.getFolderPath();
@@ -166,7 +204,7 @@ public class WebConnectionInfo {
     @Property
     public String getConnectTime() {
         return dataSourceContainer.getConnectTime() == null ? null :
-            CBModelConstants.ISO_DATE_FORMAT.format(dataSourceContainer.getConnectTime());
+            CBModelConstants.ISO_DATE_FORMAT.format(dataSourceContainer.getConnectTime().toInstant());
     }
 
     @Property
@@ -251,10 +289,24 @@ public class WebConnectionInfo {
     }
 
     @Property
-    public boolean isAuthNeeded() {
+    public DBPDriverConfigurationType getConfigurationType() {
+        DBPDriverConfigurationType configurationType = dataSourceContainer.getConnectionConfiguration().getConfigurationType();
+        if (configurationType == null) {
+            configurationType = DBPDriverConfigurationType.MANUAL;
+        }
+        return configurationType;
+    }
+
+    @Property
+    public boolean isAuthNeeded() throws DBException {
         return !dataSourceContainer.isConnected() &&
-            !dataSourceContainer.isSavePassword() &&
+            !(dataSourceContainer.isCredentialsSaved() || isAuthPropertiesEmpty()) &&
             !dataSourceContainer.getDriver().isAnonymousAccess();
+    }
+
+    // we don't show non-secured properties in FE when connecting to DB without saved credentials
+    private boolean isAuthPropertiesEmpty() {
+        return Arrays.stream(getAuthProperties()).allMatch(f -> f.hasFeature(DBConstants.PROP_FEATURE_NON_SECURED));
     }
 
     @Property
@@ -274,15 +326,17 @@ public class WebConnectionInfo {
             return new WebPropertyInfo[0];
         }
 
-        // Fill session and user provided credentials
-        boolean hasContextCredentials = session.hasContextCredentials();
+        // Fill user provided credentials
         DBPConnectionConfiguration configWithAuth = new DBPConnectionConfiguration(dataSourceContainer.getConnectionConfiguration());
-        session.provideAuthParameters(session.getProgressMonitor(), dataSourceContainer, configWithAuth);
 
+        // show all properties if it is a manual connection
+        Predicate<DBPPropertyDescriptor> predicate = CommonUtils.isEmpty(getRequiredAuth())
+            ? p -> true
+            : p -> WebCommonUtils.isAuthPropertyApplicable(p, session.getContextCredentialsProviders());
 
         DBPPropertySource credentialsSource = authModel.createCredentialsSource(dataSourceContainer, configWithAuth);
         return Arrays.stream(credentialsSource.getProperties())
-            .filter(p -> WebCommonUtils.isAuthPropertyApplicable(p, hasContextCredentials))
+            .filter(predicate)
             .map(p -> new WebPropertyInfo(session, p, credentialsSource)).toArray(WebPropertyInfo[]::new);
     }
 
@@ -311,9 +365,23 @@ public class WebConnectionInfo {
         this.savedNetworkCredentials = networkCredentials;
     }
 
-    public void clearSavedCredentials() {
+    public void clearCache() {
         this.savedAuthProperties = null;
         this.savedNetworkCredentials = null;
+        this.fireCloseListeners();
+    }
+
+    public void fireCloseListeners() {
+        if (closeListeners != null) {
+            for (DBRRunnableParametrized<WebConnectionInfo> listener : closeListeners) {
+                try {
+                    listener.run(this);
+                } catch (Exception e) {
+                    log.debug(e);
+                }
+            }
+            closeListeners = null;
+        }
     }
 
     @Property
@@ -325,4 +393,67 @@ public class WebConnectionInfo {
     public String toString() {
         return "WebConnection:" + dataSourceContainer.toString();
     }
+
+    @Property
+    public boolean isCanViewSettings() {
+        return canViewReadOnlyConnections();
+    }
+
+    @Property
+    public boolean isCanEdit() {
+        return hasProjectPermission(RMProjectPermission.DATA_SOURCES_EDIT);
+    }
+
+    @Property
+    public boolean isCanDelete() {
+        return isCanEdit();
+    }
+
+    @Property
+    public String getProjectId() {
+        return dataSourceContainer.getProject().getId();
+    }
+
+    @Property
+    public String getRequiredAuth() {
+        return dataSourceContainer.getRequiredExternalAuth();
+    }
+
+    private boolean hasProjectPermission(RMProjectPermission projectPermission) {
+        DBPProject project = dataSourceContainer.getProject();
+        if (!(project instanceof WebProjectImpl)) {
+            return false;
+        }
+        return SMUtils.hasProjectPermission(session, ((WebProjectImpl) project).getRmProject(), projectPermission);
+    }
+
+    private boolean canViewReadOnlyConnections() {
+        if (isCanEdit()) {
+            return true;
+        }
+        BaseWebAppConfiguration appConfig = (BaseWebAppConfiguration) WebAppUtils.getWebApplication().getAppConfiguration();
+        return appConfig.isShowReadOnlyConnectionInfo();
+
+    }
+
+    public void addCloseListener(DBRRunnableParametrized<WebConnectionInfo> listener) {
+        if (closeListeners == null) {
+            closeListeners = new ArrayList<>();
+        }
+        closeListeners.add(listener);
+    }
+
+    @Property
+    public int getKeepAliveInterval() {
+        return dataSourceContainer.getConnectionConfiguration().getKeepAliveInterval();
+    }
+
+    @Property
+    public List<WebSecretInfo> getSharedSecrets() throws DBException {
+        return dataSourceContainer.listSharedCredentials()
+            .stream()
+            .map(WebSecretInfo::new)
+            .collect(Collectors.toList());
+    }
+
 }

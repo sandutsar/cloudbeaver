@@ -1,11 +1,10 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import type { PluginManifest } from '@cloudbeaver/core-di';
 
 import { ConnectionAuthService } from './ConnectionAuthService';
@@ -14,8 +13,12 @@ import { ConnectionDriverPropertiesTabService } from './ConnectionForm/DriverPro
 import { ConnectionOptionsTabService } from './ConnectionForm/Options/ConnectionOptionsTabService';
 import { ConnectionOriginInfoTabService } from './ConnectionForm/OriginInfo/ConnectionOriginInfoTabService';
 import { ConnectionSSHTabService } from './ConnectionForm/SSH/ConnectionSSHTabService';
+import { ConnectionSSLTabService } from './ConnectionForm/SSL/ConnectionSSLTabService';
 import { ConnectionMenuBootstrap } from './ContextMenu/ConnectionMenuBootstrap';
 import { LocaleService } from './LocaleService';
+import { ConnectionFoldersBootstrap } from './NavNodes/ConnectionFoldersBootstrap';
+import { PluginBootstrap } from './PluginBootstrap';
+import { PluginConnectionsSettingsService } from './PluginConnectionsSettingsService';
 import { PublicConnectionFormService } from './PublicConnectionForm/PublicConnectionFormService';
 
 export const connectionPlugin: PluginManifest = {
@@ -24,6 +27,7 @@ export const connectionPlugin: PluginManifest = {
   },
 
   providers: [
+    PluginBootstrap,
     ConnectionMenuBootstrap,
     PublicConnectionFormService,
     LocaleService,
@@ -33,5 +37,8 @@ export const connectionPlugin: PluginManifest = {
     ConnectionDriverPropertiesTabService,
     ConnectionSSHTabService,
     ConnectionOriginInfoTabService,
+    ConnectionFoldersBootstrap,
+    ConnectionSSLTabService,
+    PluginConnectionsSettingsService,
   ],
 };

@@ -1,107 +1,58 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
-import { useAdministrationSettings } from '@cloudbeaver/core-administration';
-import {
-  SubmittingForm,
-  Loader,
-  useFocus,
-  ErrorMessage,
-} from '@cloudbeaver/core-blocks';
-import { useConnectionInfo, useDBDriver } from '@cloudbeaver/core-connections';
-import { useController } from '@cloudbeaver/core-di';
-import { CommonDialogWrapper, DialogComponent } from '@cloudbeaver/core-dialogs';
-import { useStyles } from '@cloudbeaver/core-theming';
+import { CommonDialogHeader, CommonDialogWrapper, useResource, useTranslate } from '@cloudbeaver/core-blocks';
+import { ConnectionInfoResource, DBDriverResource, type IConnectionInfoParams } from '@cloudbeaver/core-connections';
+import type { DialogComponent } from '@cloudbeaver/core-dialogs';
 
-import { ConnectionAuthenticationForm } from '../ConnectionAuthentication/ConnectionAuthenticationForm';
-import { DBAuthDialogController } from './DBAuthDialogController';
-import { DBAuthDialogFooter } from './DBAuthDialogFooter';
-
-const styles = css`
-    SubmittingForm {
-      overflow: auto;
-      margin: auto;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
-    ConnectionAuthenticationForm {
-      align-content: center;
-    }
-    ErrorMessage {
-      composes: theme-background-secondary theme-text-on-secondary from global;
-      flex: 1;
-    }
-`;
+import { DatabaseCredentialsAuthDialog } from './DatabaseCredentialsAuthDialog/DatabaseCredentialsAuthDialog';
+import { DatabaseSecretAuthDialog } from './DatabaseSecretAuthDialog/DatabaseSecretAuthDialog';
 
 interface Payload {
-  connectionId: string;
+  connection: IConnectionInfoParams;
   networkHandlers: string[];
+  resetCredentials?: boolean;
 }
 
-export const DatabaseAuthDialog: DialogComponent<Payload> = observer(function DatabaseAuthDialog({
-  payload,
-  options,
-  rejectDialog,
-}) {
-  const connection = useConnectionInfo(payload.connectionId);
-  const controller = useController(DBAuthDialogController, payload.connectionId, payload.networkHandlers, rejectDialog);
+export const DatabaseAuthDialog: DialogComponent<Payload> = observer(function DatabaseAuthDialog({ payload, options, rejectDialog, resolveDialog }) {
+  const connectionInfoLoader = useResource(DatabaseAuthDialog, ConnectionInfoResource, {
+    key: payload.connection,
+    includes: ['includeAuthNeeded', 'includeSharedSecrets', 'includeNetworkHandlersConfig', 'includeCredentialsSaved'],
+  });
+  const translate = useTranslate();
+  const driverLoader = useResource(DatabaseAuthDialog, DBDriverResource, connectionInfoLoader.data?.driverId || null);
+  const useSharedCredentials = (connectionInfoLoader.data?.sharedSecrets?.length || 0) > 1;
 
-  const { driver } = useDBDriver(connection.connectionInfo?.driverId || '');
-  const { credentialsSavingEnabled } = useAdministrationSettings();
-  const [focusedRef] = useFocus<HTMLFormElement>({ focusFirstChild: true });
+  let subtitle = connectionInfoLoader.data?.name;
 
-  let authModelId: string | null = null;
-
-  if (connection.connectionInfo?.authNeeded) {
-    authModelId = connection.connectionInfo.authModel || driver?.defaultAuthModel || null;
+  if (useSharedCredentials) {
+    subtitle = [subtitle, translate('plugin_connections_connection_auth_secret_description')].join(' | ');
   }
 
-  return styled(useStyles(styles))(
-    <CommonDialogWrapper
-      size='large'
-      title="connections_database_authentication"
-      subTitle={connection.connectionInfo?.name}
-      icon={driver?.icon}
-      footer={(
-        <DBAuthDialogFooter
-          isAuthenticating={controller.isAuthenticating}
-          onLogin={controller.login}
-        >
-          {controller.error.responseMessage && (
-            <ErrorMessage
-              text={controller.error.responseMessage}
-              hasDetails={controller.error.hasDetails}
-              onShowDetails={controller.showDetails}
-            />
-          )}
-        </DBAuthDialogFooter>
+  return (
+    <CommonDialogWrapper size="large" fixedSize={useSharedCredentials}>
+      <CommonDialogHeader
+        title="connections_database_authentication"
+        subTitle={subtitle}
+        icon={driverLoader.data?.icon}
+        onReject={options?.persistent ? undefined : rejectDialog}
+      />
+      {useSharedCredentials ? (
+        <DatabaseSecretAuthDialog connectionKey={payload.connection} onLogin={resolveDialog} />
+      ) : (
+        <DatabaseCredentialsAuthDialog
+          connection={payload.connection}
+          networkHandlers={payload.networkHandlers}
+          resetCredentials={payload.resetCredentials}
+          onLogin={resolveDialog}
+        />
       )}
-      onReject={options?.persistent ? undefined : rejectDialog}
-    >
-      {(!connection.isLoaded() || connection.isLoading() || !controller.configured)
-        ? <Loader />
-        : (
-          <SubmittingForm ref={focusedRef} onSubmit={controller.login}>
-            <ConnectionAuthenticationForm
-              config={controller.config}
-              authModelId={authModelId}
-              authProperties={connection.connectionInfo?.authProperties}
-              networkHandlers={payload.networkHandlers}
-              formId={payload.connectionId}
-              allowSaveCredentials={credentialsSavingEnabled}
-              disabled={controller.isAuthenticating}
-            />
-          </SubmittingForm>
-        )}
     </CommonDialogWrapper>
   );
 });

@@ -1,26 +1,44 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { EObjectFeature, NavNodeManagerService, DATA_CONTEXT_NAV_NODE } from '@cloudbeaver/core-app';
-import { Connection, ConnectionInfoResource, ConnectionsManagerService, EConnectionFeature } from '@cloudbeaver/core-connections';
+import {
+  Connection,
+  ConnectionInfoResource,
+  ConnectionsManagerService,
+  ConnectionsSettingsService,
+  createConnectionParam,
+  DATA_CONTEXT_CONNECTION,
+} from '@cloudbeaver/core-connections';
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 import { NotificationService } from '@cloudbeaver/core-events';
-import { CONNECTION_NAVIGATOR_VIEW_SETTINGS, isNavigatorViewSettingsEqual, NavigatorViewSettings } from '@cloudbeaver/core-root';
-import { ActionService, ACTION_DELETE, DATA_CONTEXT_MENU, DATA_CONTEXT_MENU_NESTED, MenuSeparatorItem, MenuService } from '@cloudbeaver/core-view';
+import { DATA_CONTEXT_NAV_NODE, EObjectFeature, NavNodeManagerService } from '@cloudbeaver/core-navigation-tree';
+import { getCachedMapResourceLoaderState } from '@cloudbeaver/core-resource';
+import {
+  CONNECTION_NAVIGATOR_VIEW_SETTINGS,
+  EAdminPermission,
+  isNavigatorViewSettingsEqual,
+  NavigatorViewSettings,
+  PermissionsService,
+  ServerConfigResource,
+} from '@cloudbeaver/core-root';
+import { ACTION_DELETE, ActionService, MenuSeparatorItem, MenuService } from '@cloudbeaver/core-view';
+import { MENU_APP_ACTIONS } from '@cloudbeaver/plugin-top-app-bar';
 
+import { PluginConnectionsSettingsService } from '../PluginConnectionsSettingsService';
 import { PublicConnectionFormService } from '../PublicConnectionForm/PublicConnectionFormService';
+import { ACTION_CONNECTION_CHANGE_CREDENTIALS } from './Actions/ACTION_CONNECTION_CHANGE_CREDENTIALS';
 import { ACTION_CONNECTION_DISCONNECT } from './Actions/ACTION_CONNECTION_DISCONNECT';
+import { ACTION_CONNECTION_DISCONNECT_ALL } from './Actions/ACTION_CONNECTION_DISCONNECT_ALL';
 import { ACTION_CONNECTION_EDIT } from './Actions/ACTION_CONNECTION_EDIT';
 import { ACTION_CONNECTION_VIEW_ADVANCED } from './Actions/ACTION_CONNECTION_VIEW_ADVANCED';
 import { ACTION_CONNECTION_VIEW_SIMPLE } from './Actions/ACTION_CONNECTION_VIEW_SIMPLE';
 import { ACTION_CONNECTION_VIEW_SYSTEM_OBJECTS } from './Actions/ACTION_CONNECTION_VIEW_SYSTEM_OBJECTS';
-import { DATA_CONTEXT_CONNECTION } from './DATA_CONTEXT_CONNECTION';
 import { MENU_CONNECTION_VIEW } from './MENU_CONNECTION_VIEW';
+import { MENU_CONNECTIONS } from './MENU_CONNECTIONS';
 
 @injectable()
 export class ConnectionMenuBootstrap extends Bootstrap {
@@ -32,13 +50,24 @@ export class ConnectionMenuBootstrap extends Bootstrap {
     private readonly actionService: ActionService,
     private readonly menuService: MenuService,
     private readonly publicConnectionFormService: PublicConnectionFormService,
+    private readonly connectionsSettingsService: ConnectionsSettingsService,
+    private readonly pluginConnectionsSettingsService: PluginConnectionsSettingsService,
+    private readonly permissionsService: PermissionsService,
+    private readonly serverConfigResource: ServerConfigResource,
   ) {
     super();
   }
 
-  register(): void | Promise<void> {
+  register(): void {
+    this.addConnectionsMenuToTopAppBar();
+
     this.menuService.addCreator({
+      root: true,
       isApplicable: context => {
+        if (this.pluginConnectionsSettingsService.hideConnectionViewForUsers && !this.permissionsService.has(EAdminPermission.admin)) {
+          return false;
+        }
+
         const connection = context.tryGet(DATA_CONTEXT_CONNECTION);
 
         if (!connection?.connected) {
@@ -51,23 +80,13 @@ export class ConnectionMenuBootstrap extends Bootstrap {
           return false;
         }
 
-        return (
-          context.has(DATA_CONTEXT_CONNECTION)
-          && !context.has(DATA_CONTEXT_MENU_NESTED)
-        );
+        return context.has(DATA_CONTEXT_CONNECTION);
       },
-      getItems: (context, items) => [
-        ...items,
-        MENU_CONNECTION_VIEW,
-      ],
+      getItems: (context, items) => [...items, MENU_CONNECTION_VIEW],
     });
 
     this.menuService.addCreator({
-      isApplicable: context => {
-        const menu = context.tryGet(DATA_CONTEXT_MENU);
-
-        return menu === MENU_CONNECTION_VIEW;
-      },
+      menus: [MENU_CONNECTION_VIEW],
       getItems: (context, items) => [
         ...items,
         ACTION_CONNECTION_VIEW_SIMPLE,
@@ -79,26 +98,16 @@ export class ConnectionMenuBootstrap extends Bootstrap {
 
     this.actionService.addHandler({
       id: 'connection-view',
-      isActionApplicable: (context, action) => [
-        ACTION_CONNECTION_VIEW_SIMPLE,
-        ACTION_CONNECTION_VIEW_ADVANCED,
-        ACTION_CONNECTION_VIEW_SYSTEM_OBJECTS,
-      ].includes(action),
+      actions: [ACTION_CONNECTION_VIEW_SIMPLE, ACTION_CONNECTION_VIEW_ADVANCED, ACTION_CONNECTION_VIEW_SYSTEM_OBJECTS],
       isChecked: (context, action) => {
         const connection = context.get(DATA_CONTEXT_CONNECTION);
 
         switch (action) {
           case ACTION_CONNECTION_VIEW_SIMPLE: {
-            return isNavigatorViewSettingsEqual(
-              connection.navigatorSettings,
-              CONNECTION_NAVIGATOR_VIEW_SETTINGS.simple
-            );
+            return isNavigatorViewSettingsEqual(connection.navigatorSettings, CONNECTION_NAVIGATOR_VIEW_SETTINGS.simple);
           }
           case ACTION_CONNECTION_VIEW_ADVANCED: {
-            return isNavigatorViewSettingsEqual(
-              connection.navigatorSettings,
-              CONNECTION_NAVIGATOR_VIEW_SETTINGS.advanced
-            );
+            return isNavigatorViewSettingsEqual(connection.navigatorSettings, CONNECTION_NAVIGATOR_VIEW_SETTINGS.advanced);
           }
           case ACTION_CONNECTION_VIEW_SYSTEM_OBJECTS: {
             return connection.navigatorSettings.showSystemObjects;
@@ -133,11 +142,14 @@ export class ConnectionMenuBootstrap extends Bootstrap {
     });
 
     this.menuService.addCreator({
-      isApplicable: context => context.has(DATA_CONTEXT_CONNECTION) && !context.has(DATA_CONTEXT_MENU_NESTED),
+      root: true,
+      contexts: [DATA_CONTEXT_CONNECTION],
       getItems: (context, items) => [
         ...items,
+        ACTION_CONNECTION_CHANGE_CREDENTIALS,
         ACTION_CONNECTION_EDIT,
         ACTION_CONNECTION_DISCONNECT,
+        ACTION_CONNECTION_DISCONNECT_ALL,
       ],
     });
 
@@ -159,30 +171,73 @@ export class ConnectionMenuBootstrap extends Bootstrap {
           return connection.connected;
         }
 
-        if (action === ACTION_DELETE) {
-          return connection.features.includes(EConnectionFeature.manageable);
+        if (action === ACTION_CONNECTION_DISCONNECT_ALL) {
+          return this.connectionsManagerService.hasAnyConnection(true);
         }
 
-        return action === ACTION_CONNECTION_EDIT;
+        if (action === ACTION_DELETE) {
+          return connection.canDelete;
+        }
+
+        if (action === ACTION_CONNECTION_EDIT) {
+          return connection.canEdit || connection.canViewSettings;
+        }
+
+        if (action === ACTION_CONNECTION_CHANGE_CREDENTIALS) {
+          return this.serverConfigResource.distributed && !connection.sharedCredentials;
+        }
+
+        return false;
+      },
+      isHidden: (context, action) => {
+        const connection = context.tryGet(DATA_CONTEXT_CONNECTION);
+
+        if (action === ACTION_CONNECTION_CHANGE_CREDENTIALS) {
+          return !connection?.credentialsSaved;
+        }
+
+        return false;
+      },
+      getLoader: (context, action) => {
+        const connection = context.get(DATA_CONTEXT_CONNECTION);
+
+        if (action === ACTION_CONNECTION_CHANGE_CREDENTIALS) {
+          return getCachedMapResourceLoaderState(
+            this.connectionInfoResource,
+            () => createConnectionParam(connection),
+            () => ['includeCredentialsSaved' as const],
+            true,
+          );
+        }
+
+        return [];
       },
       handler: async (context, action) => {
         const connection = context.get(DATA_CONTEXT_CONNECTION);
 
         switch (action) {
           case ACTION_CONNECTION_DISCONNECT: {
-            await this.connectionsManagerService.closeConnectionAsync(connection.id);
+            await this.connectionsManagerService.closeConnectionAsync(createConnectionParam(connection));
+            break;
+          }
+          case ACTION_CONNECTION_DISCONNECT_ALL: {
+            await this.connectionsManagerService.closeAllConnections();
             break;
           }
           case ACTION_DELETE: {
             try {
-              await this.connectionsManagerService.deleteConnection(connection.id);
+              await this.connectionsManagerService.deleteConnection(createConnectionParam(connection));
             } catch (exception: any) {
               this.notificationService.logException(exception, 'Failed to delete connection');
             }
             break;
           }
           case ACTION_CONNECTION_EDIT: {
-            this.publicConnectionFormService.open({ connectionId: connection.id });
+            this.publicConnectionFormService.open(connection.projectId, { connectionId: connection.id });
+            break;
+          }
+          case ACTION_CONNECTION_CHANGE_CREDENTIALS: {
+            await this.connectionsManagerService.requireConnection({ connectionId: connection.id, projectId: connection.projectId }, true);
             break;
           }
         }
@@ -190,11 +245,9 @@ export class ConnectionMenuBootstrap extends Bootstrap {
     });
   }
 
-  load(): void {}
-
   private async changeConnectionView(connection: Connection, settings: NavigatorViewSettings) {
     try {
-      connection = await this.connectionInfoResource.changeConnectionView(connection.id, settings);
+      connection = await this.connectionInfoResource.changeConnectionView(createConnectionParam(connection), settings);
 
       if (connection.nodePath) {
         await this.navNodeManagerService.refreshTree(connection.nodePath);
@@ -202,5 +255,18 @@ export class ConnectionMenuBootstrap extends Bootstrap {
     } catch (exception: any) {
       this.notificationService.logException(exception);
     }
+  }
+
+  private addConnectionsMenuToTopAppBar() {
+    this.menuService.addCreator({
+      menus: [MENU_APP_ACTIONS],
+      getItems: (context, items) => [...items, MENU_CONNECTIONS],
+    });
+    this.menuService.setHandler({
+      id: 'connections-menu-base',
+      menus: [MENU_CONNECTIONS],
+      isHidden: () => this.connectionsManagerService.createConnectionProjects.length === 0 || this.connectionsSettingsService.disabled,
+      isLabelVisible: () => false,
+    });
   }
 }

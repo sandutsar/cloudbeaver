@@ -1,26 +1,44 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { observable } from 'mobx';
 
 import { AdministrationScreenService } from '@cloudbeaver/core-administration';
-import { AppAuthService, AuthInfoService, AuthProviderContext, AuthProviderService, AuthProvidersResource, AUTH_PROVIDER_LOCAL_ID, UserInfoResource } from '@cloudbeaver/core-authentication';
-import { injectable, Bootstrap } from '@cloudbeaver/core-di';
+import {
+  AppAuthService,
+  AUTH_PROVIDER_LOCAL_ID,
+  AuthProviderContext,
+  AuthProviderService,
+  AuthProvidersResource,
+  RequestedProvider,
+  UserInfoResource,
+  UserLogoutInfo,
+} from '@cloudbeaver/core-authentication';
+import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 import type { DialogueStateResult } from '@cloudbeaver/core-dialogs';
 import { NotificationService } from '@cloudbeaver/core-events';
-import type { IExecutorHandler } from '@cloudbeaver/core-executor';
-import { ServerConfigResource, SessionDataResource } from '@cloudbeaver/core-root';
-import { ScreenService } from '@cloudbeaver/core-routing';
-import type { ObjectOrigin } from '@cloudbeaver/core-sdk';
-import { openCenteredPopup } from '@cloudbeaver/core-utils';
+import { Executor, ExecutorInterrupter, IExecutionContextProvider, IExecutorHandler } from '@cloudbeaver/core-executor';
+import { CachedMapAllKey } from '@cloudbeaver/core-resource';
+import { ISessionAction, ServerConfigResource, sessionActionContext, SessionActionService, SessionDataResource } from '@cloudbeaver/core-root';
+import { ScreenService, WindowsService } from '@cloudbeaver/core-routing';
+import { NavigationService } from '@cloudbeaver/core-ui';
+import { uuid } from '@cloudbeaver/core-utils';
 
 import { AuthDialogService } from './Dialog/AuthDialogService';
+import type { IAuthOptions } from './IAuthOptions';
+import { isAutoLoginSessionAction } from './isAutoLoginSessionAction';
+
+type AuthEventType = 'before' | 'after';
 
 @injectable()
 export class AuthenticationService extends Bootstrap {
+  readonly onLogout: Executor<AuthEventType>;
+  readonly onLogin: Executor<AuthEventType>;
+
   configureAuthProvider: (() => void) | null;
   configureIdentityProvider: (() => void) | null;
 
@@ -36,10 +54,18 @@ export class AuthenticationService extends Bootstrap {
     private readonly authProviderService: AuthProviderService,
     private readonly authProvidersResource: AuthProvidersResource,
     private readonly sessionDataResource: SessionDataResource,
-    private readonly authInfoService: AuthInfoService,
     private readonly serverConfigResource: ServerConfigResource,
+    private readonly windowsService: WindowsService,
+    private readonly sessionActionService: SessionActionService,
+    private readonly navigationService: NavigationService,
   ) {
     super();
+
+    this.onLogout = new Executor();
+    this.onLogin = new Executor();
+
+    this.onLogout.before(this.navigationService.navigationTask);
+
     this.authPromise = null;
     this.configureAuthProvider = null;
     this.configureIdentityProvider = null;
@@ -53,139 +79,178 @@ export class AuthenticationService extends Bootstrap {
     this.configureIdentityProvider = action;
   }
 
-  async authUser(provider: string | null = null, link?: boolean): Promise<void> {
-    await this.auth(false, provider, link);
+  async authUser(providerId: string | null = null, linkUser?: boolean): Promise<void> {
+    await this.auth(false, { providerId, linkUser });
   }
 
-  async logout(): Promise<void> {
-    if (this.authInfoService.userAuthConfigurations.length > 0) {
-      const userAuthConfiguration = this.authInfoService.userAuthConfigurations[0];
+  async logout(providerId?: string, configurationId?: string): Promise<void> {
+    const contexts = await this.onLogout.execute('before');
 
-      if (userAuthConfiguration.signOutLink) {
-        this.logoutConfiguration(userAuthConfiguration.id, true);
-      }
+    if (ExecutorInterrupter.isInterrupted(contexts)) {
+      return;
     }
 
     try {
-      await this.userInfoResource.logout();
+      const logoutResult = await this.userInfoResource.logout(providerId, configurationId);
 
-      if (!this.administrationScreenService.isConfigurationMode) {
+      this.handleRedirectLinks(logoutResult.result);
+
+      if (!this.administrationScreenService.isConfigurationMode && !providerId) {
         this.screenService.navigateToRoot();
       }
+
+      await this.onLogout.execute('after');
     } catch (exception: any) {
-      this.notificationService.logException(exception, 'Can\'t logout');
+      this.notificationService.logException(exception, 'authentication_logout_error');
     }
   }
 
-  logoutConfiguration(configurationId: string, full: boolean): void {
-    const userAuthConfiguration = this.authInfoService.userAuthConfigurations
-      .find(configuration => configuration.id === configurationId);
+  // TODO handle all redirect links once we know what to do with multiple popups issue
+  private handleRedirectLinks(userLogoutInfo: UserLogoutInfo) {
+    const redirectLinks = userLogoutInfo.redirectLinks;
 
-    if (userAuthConfiguration?.signOutLink) {
-      const popup = openCenteredPopup(userAuthConfiguration.signOutLink, `${userAuthConfiguration.id}-sign-out`, 600, 700, undefined);
+    if (redirectLinks.length) {
+      const url = redirectLinks[0];
+      const id = `okta-logout-id-${uuid()}`;
+
+      const popup = this.windowsService.open(id, {
+        url,
+        target: id,
+        width: 600,
+        height: 700,
+      });
 
       if (popup) {
         popup.blur();
         window.focus();
       }
-
-      if (!full) {
-        let maxTime = 1000 / 100 * 10;
-
-        const interval = setInterval(() => {
-          if (popup?.location.href !== userAuthConfiguration.signOutLink || maxTime === 0) {
-            this.userInfoResource.markOutdated();
-            clearInterval(interval);
-          }
-          maxTime--;
-        }, 100);
-      }
     }
   }
 
-  private async auth(persistent: boolean, provider: string | null = null, link?: boolean) {
+  private async auth(persistent: boolean, options: IAuthOptions) {
     if (this.authPromise) {
-      return this.authPromise;
+      await this.waitAuth();
+      return;
     }
 
-    this.authPromise = this.authDialogService.showLoginForm(persistent, provider, link);
+    const contexts = await this.onLogin.execute('before');
+
+    if (ExecutorInterrupter.isInterrupted(contexts)) {
+      return;
+    }
+
+    options = observable(options);
+
+    this.authPromise = this.authDialogService
+      .showLoginForm(persistent, options)
+      .then(async state => {
+        await this.onLogin.execute('after');
+        return state;
+      })
+      .finally(() => {
+        this.authPromise = null;
+      });
 
     if (this.serverConfigResource.redirectOnFederatedAuth) {
-      await this.authProvidersResource.loadAll();
+      await this.authProvidersResource.load(CachedMapAllKey);
 
-      const providers = this.authProvidersResource
-        .getEnabledProviders();
+      const providers = this.authProvidersResource.getEnabledProviders();
 
       if (providers.length === 1) {
         const configurableProvider = providers.find(provider => provider.configurable);
 
         if (configurableProvider?.configurations?.length === 1) {
-          const user = await this.authInfoService.sso(configurableProvider.id, configurableProvider.configurations[0]);
+          const configuration = configurableProvider.configurations[0];
 
-          if (user) {
-            this.authDialogService.closeLoginForm(this.authPromise);
-          }
+          options.providerId = configurableProvider.id;
+          options.configurationId = configuration.id;
         }
       }
     }
 
-    try {
-      return await this.authPromise;
-    } finally {
-      this.authPromise = null;
-    }
+    await this.authPromise;
   }
 
   private async requireAuthentication() {
+    await this.waitAuth();
+
     const authNeeded = await this.appAuthService.isAuthNeeded();
     if (!authNeeded) {
       return;
     }
 
-    await this.auth(true, null, true);
+    await this.auth(true, { accessRequest: true, providerId: null, linkUser: false });
   }
 
   register(): void {
     // this.sessionDataResource.beforeLoad.addHandler(
     //   ExecutorInterrupter.interrupter(() => this.appAuthService.isAuthNeeded())
     // );
-    this.sessionDataResource.onDataUpdate.addPostHandler(() => { this.requireAuthentication(); });
+
+    this.sessionActionService.onAction.addHandler(this.authSessionAction.bind(this));
+    this.sessionDataResource.onDataUpdate.addPostHandler(() => {
+      this.requireAuthentication();
+    });
     this.screenService.routeChange.addHandler(() => this.requireAuthentication());
 
     this.administrationScreenService.ensurePermissions.addHandler(async () => {
-      const userInfo = await this.userInfoResource.load(undefined, []);
+      await this.waitAuth();
+
+      const userInfo = await this.userInfoResource.load();
       if (userInfo) {
         return;
       }
 
-      await this.auth(false, null, true);
+      await this.auth(false, { providerId: null, linkUser: false, accessRequest: true });
     });
     this.authProviderService.requestAuthProvider.addHandler(this.requestAuthProviderHandler);
   }
 
-  load(): void { }
+  private async authSessionAction(data: ISessionAction | null, contexts: IExecutionContextProvider<ISessionAction | null>) {
+    const action = contexts.getContext(sessionActionContext);
 
-  private readonly requestAuthProviderHandler: IExecutorHandler<ObjectOrigin> = async (data, contexts) => {
-    if (data.type === AUTH_PROVIDER_LOCAL_ID) {
+    if (isAutoLoginSessionAction(data)) {
+      const user = await this.userInfoResource.finishFederatedAuthentication(data['auth-id'], false);
+
+      if (user) {
+        //we request this method/request bc login form can be opened automatically.
+        //in case when authentication is required,
+        //loin form may be opened and we need to close it
+        this.authDialogService.closeLoginForm();
+      }
+      action.process();
+    }
+  }
+
+  private readonly requestAuthProviderHandler: IExecutorHandler<RequestedProvider> = async (data, contexts) => {
+    await this.waitAuth();
+
+    if (data.providerId === AUTH_PROVIDER_LOCAL_ID) {
       const provider = contexts.getContext(AuthProviderContext);
       provider.auth();
       return;
     }
 
-    await this.authProvidersResource.loadAll();
-    await this.userInfoResource.load(undefined, []);
+    await this.authProvidersResource.load();
+    await this.userInfoResource.load();
 
-    if (!this.authProvidersResource.has(data.subType ?? data.type)) {
+    if (!this.authProvidersResource.has(data.providerId)) {
       return;
     }
 
-    if (!this.userInfoResource.hasToken(data.type, data.subType)) {
-      await this.auth(false, data.subType ?? data.type);
+    if (!this.userInfoResource.hasToken(data.providerId)) {
+      await this.auth(false, { providerId: data.providerId, configurationId: data.configurationId });
     }
 
-    if (this.userInfoResource.hasToken(data.type, data.subType)) {
+    if (this.userInfoResource.hasToken(data.providerId)) {
       const provider = contexts.getContext(AuthProviderContext);
       provider.auth();
     }
   };
+
+  private async waitAuth() {
+    try {
+      await this.authPromise;
+    } catch {}
+  }
 }

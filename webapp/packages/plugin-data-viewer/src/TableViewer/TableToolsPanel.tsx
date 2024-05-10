@@ -1,21 +1,19 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
-import { TextPlaceholder } from '@cloudbeaver/core-blocks';
-import { useTranslate } from '@cloudbeaver/core-localization';
+import { s, TextPlaceholder, useS, useTranslate } from '@cloudbeaver/core-blocks';
 import type { ResultDataFormat } from '@cloudbeaver/core-sdk';
 
 import type { IDatabaseDataModel } from '../DatabaseDataModel/IDatabaseDataModel';
 import type { IDataPresentationOptions } from '../DataPresentationService';
 import type { IDataTableActions } from './IDataTableActions';
+import styles from './TableToolsPanel.m.css';
 
 interface Props {
   model: IDatabaseDataModel<any, any>;
@@ -23,23 +21,12 @@ interface Props {
   dataFormat: ResultDataFormat;
   presentation: IDataPresentationOptions | null;
   resultIndex: number;
+  simple: boolean;
 }
 
-const styles = css`
-  Presentation {
-    flex: 1;
-    overflow: auto;
-  }
-`;
-
-export const TableToolsPanel = observer<Props>(function TableToolsPanel({
-  model,
-  actions,
-  dataFormat,
-  presentation,
-  resultIndex,
-}) {
+export const TableToolsPanel = observer<Props>(function TableToolsPanel({ model, actions, dataFormat, presentation, resultIndex, simple }) {
   const translate = useTranslate();
+  const style = useS(styles);
 
   const result = model.getResult(resultIndex);
 
@@ -58,7 +45,14 @@ export const TableToolsPanel = observer<Props>(function TableToolsPanel({
     return <TextPlaceholder>{translate('data_viewer_nodata_message')}</TextPlaceholder>;
   }
 
-  return styled(styles)(
-    <Presentation dataFormat={dataFormat} model={model} actions={actions} resultIndex={resultIndex} />
+  return (
+    <Presentation
+      className={s(style, { presentation: true })}
+      dataFormat={dataFormat}
+      model={model}
+      actions={actions}
+      resultIndex={resultIndex}
+      simple={simple}
+    />
   );
 });

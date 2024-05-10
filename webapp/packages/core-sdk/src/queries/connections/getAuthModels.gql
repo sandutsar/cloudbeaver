@@ -5,7 +5,9 @@ query getAuthModels {
     description
     icon
     requiresLocalConfiguration
+    requiredAuth
     properties {
+      required
       id
       displayName
       description

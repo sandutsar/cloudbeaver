@@ -1,19 +1,28 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
 
+import { s, useS } from '../index';
+import SlideBoxStyles from './SlideBox.m.css';
+import SlideBoxElementStyles from './SlideElement.m.css';
+import SlideBoxOverlayStyles from './SlideOverlay.m.css';
+
 interface Props {
-  open?: boolean;
   className?: string;
+  children?: React.ReactNode;
+  open?: boolean;
 }
 
-export const SlideBox: React.FC<Props> = function SlideBox({ children, className }) {
+export const SlideBox = observer<Props>(function SlideBox({ children, open, className }) {
+  const slideBoxStyles = useS(SlideBoxStyles);
+  const slideBoxElementStyles = useS(SlideBoxElementStyles);
+  const slideBoxOverlayStyles = useS(SlideBoxOverlayStyles);
   const divRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +39,7 @@ export const SlideBox: React.FC<Props> = function SlideBox({ children, className
       div.addEventListener('scroll', handleScroll);
     }
 
-    return () => { 
+    return () => {
       if (div) {
         div.removeEventListener('scroll', handleScroll);
       }
@@ -38,8 +47,11 @@ export const SlideBox: React.FC<Props> = function SlideBox({ children, className
   }, []);
 
   return (
-    <div ref={divRef} className={className}>
+    <div
+      ref={divRef}
+      className={s(slideBoxStyles, { slideBox: true }, s(slideBoxElementStyles, { open }), s(slideBoxOverlayStyles, { open }), className)}
+    >
       {children}
     </div>
   );
-};
+});

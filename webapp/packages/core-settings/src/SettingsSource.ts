@@ -1,40 +1,95 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { action, makeObservable, observable } from 'mobx';
 
-import { makeObservable, observable } from 'mobx';
+import { ISyncExecutor, SyncExecutor } from '@cloudbeaver/core-executor';
+import { isNotNullDefined } from '@cloudbeaver/core-utils';
 
-import type { ISettingsSource } from './ISettingsSource';
+import type { ISettingChangeData, ISettingsSource } from './ISettingsSource';
 
-export class SettingsSource implements ISettingsSource {
-  protected store = new Map<string, any>();
+export abstract class SettingsSource implements ISettingsSource {
+  readonly onChange: ISyncExecutor<ISettingChangeData>;
+  private updating: boolean;
+  protected readonly changes: Map<any, any>;
+  constructor() {
+    this.onChange = new SyncExecutor();
+    this.updating = false;
+    this.changes = new Map();
 
-  constructor(protected fallback?: ISettingsSource) {
-    makeObservable<this, 'store'>(this, {
-      store: observable,
+    makeObservable<this, 'update' | 'changes'>(this, {
+      changes: observable.shallow,
+      update: action,
     });
   }
 
-  has(key: string): boolean {
-    return this.store.has(key) || !!this.fallback?.has(key);
+  has(key: any): boolean {
+    return this.changes.has(key);
   }
 
-  getValue(key: string): any | undefined {
-    if (this.fallback?.has(key)) {
-      return this.fallback.getValue(key);
+  isEdited(key?: any): boolean {
+    if (isNotNullDefined(key)) {
+      return this.changes.has(key);
     }
-    return this.store.get(key);
+
+    return this.changes.size > 0;
   }
 
-  setValue(key: string, value: any): void {
-    this.store.set(key, value);
-  }
+  protected abstract getSnapshot(): Record<string, any>;
+  abstract isReadOnly(key: any): boolean;
+  abstract getValue(key: any): any;
+  abstract save(): Promise<void>;
 
   clear(): void {
-    this.store.clear();
+    this.changes.clear();
+  }
+
+  getEditedValue(key: any): any {
+    if (this.changes.has(key)) {
+      return this.changes.get(key);
+    }
+
+    return this.getValue(key);
+  }
+
+  setValue(key: any, value: any): void {
+    const currentValue = this.getValue(key);
+    if (currentValue === value || (!isNotNullDefined(currentValue) && value === null)) {
+      this.changes.delete(key);
+    } else {
+      this.changes.set(key, value);
+    }
+  }
+
+  protected update(action: () => void) {
+    if (this.updating) {
+      action();
+      return;
+    }
+
+    this.updating = true;
+    try {
+      const snapshot = this.getSnapshot();
+      action();
+      const newSnapshot = this.getSnapshot();
+
+      for (const [key, value] of Object.entries(newSnapshot)) {
+        if (snapshot[key] !== value) {
+          this.onChange.execute({ key, value });
+        }
+      }
+
+      for (const key of Object.keys(snapshot)) {
+        if (!(key in newSnapshot)) {
+          this.onChange.execute({ key, value: undefined });
+        }
+      }
+    } finally {
+      this.updating = false;
+    }
   }
 }

@@ -1,27 +1,43 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import { RenameDialog } from '@cloudbeaver/core-blocks';
 import {
-  MainMenuService,
-  EObjectFeature,
-  ConnectionSchemaManagerService,
-  isObjectCatalogProvider, isObjectSchemaProvider, DATA_CONTEXT_NAV_NODE, NavigationTabsService
-} from '@cloudbeaver/core-app';
-import { isConnectionProvider } from '@cloudbeaver/core-connections';
+  Connection,
+  ConnectionInfoResource,
+  createConnectionParam,
+  DATA_CONTEXT_CONNECTION,
+  IConnectionInfoParams,
+  isConnectionProvider,
+  isObjectCatalogProvider,
+  isObjectSchemaProvider,
+} from '@cloudbeaver/core-connections';
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
-import { CommonDialogService, DialogueStateResult, RenameDialog } from '@cloudbeaver/core-dialogs';
+import { CommonDialogService, DialogueStateResult } from '@cloudbeaver/core-dialogs';
 import type { IExecutorHandler } from '@cloudbeaver/core-executor';
 import { ExtensionUtils } from '@cloudbeaver/core-extensions';
+import { LocalizationService } from '@cloudbeaver/core-localization';
+import { DATA_CONTEXT_NAV_NODE, EObjectFeature, NodeManagerUtils } from '@cloudbeaver/core-navigation-tree';
 import { ISessionAction, sessionActionContext, SessionActionService } from '@cloudbeaver/core-root';
-import { ActionService, ACTION_RENAME, DATA_CONTEXT_MENU_NESTED, menuExtractActions, MenuService, ViewService } from '@cloudbeaver/core-view';
-import { DATA_CONTEXT_CONNECTION } from '@cloudbeaver/plugin-connections';
-import { DATA_CONTEXT_SQL_EDITOR_STATE } from '@cloudbeaver/plugin-sql-editor';
+import { ACTION_RENAME, ActionService, menuExtractItems, MenuService, ViewService } from '@cloudbeaver/core-view';
+import { MENU_CONNECTIONS } from '@cloudbeaver/plugin-connections';
+import { NavigationTabsService } from '@cloudbeaver/plugin-navigation-tabs';
+import {
+  DATA_CONTEXT_SQL_EDITOR_STATE,
+  ESqlDataSourceFeatures,
+  getSqlEditorName,
+  LocalStorageSqlDataSource,
+  SqlDataSourceService,
+  SqlEditorService,
+  SqlEditorSettingsService,
+} from '@cloudbeaver/plugin-sql-editor';
+import { MENU_APP_ACTIONS } from '@cloudbeaver/plugin-top-app-bar';
 
+import { ACTION_SQL_EDITOR_NEW } from './ACTION_SQL_EDITOR_NEW';
 import { ACTION_SQL_EDITOR_OPEN } from './ACTION_SQL_EDITOR_OPEN';
 import { DATA_CONTEXT_SQL_EDITOR_TAB } from './DATA_CONTEXT_SQL_EDITOR_TAB';
 import { isSessionActionOpenSQLEditor } from './sessionActionOpenSQLEditor';
@@ -29,44 +45,40 @@ import { SQL_EDITOR_SOURCE_ACTION } from './SQL_EDITOR_SOURCE_ACTION';
 import { SqlEditorNavigatorService } from './SqlEditorNavigatorService';
 import { SqlEditorTabService } from './SqlEditorTabService';
 
+interface IActiveConnectionContext {
+  connectionKey?: IConnectionInfoParams;
+  catalogId?: string;
+  schemaId?: string;
+}
+
 @injectable()
 export class SqlEditorBootstrap extends Bootstrap {
   constructor(
-    private readonly mainMenuService: MainMenuService,
     private readonly sqlEditorNavigatorService: SqlEditorNavigatorService,
     private readonly navigationTabsService: NavigationTabsService,
-    private readonly connectionSchemaManagerService: ConnectionSchemaManagerService,
     private readonly viewService: ViewService,
     private readonly actionService: ActionService,
     private readonly menuService: MenuService,
     private readonly sessionActionService: SessionActionService,
     private readonly commonDialogService: CommonDialogService,
-    private readonly sqlEditorTabService: SqlEditorTabService
+    private readonly sqlEditorTabService: SqlEditorTabService,
+    private readonly sqlDataSourceService: SqlDataSourceService,
+    private readonly connectionInfoResource: ConnectionInfoResource,
+    private readonly sqlEditorService: SqlEditorService,
+    private readonly localizationService: LocalizationService,
+    private readonly sqlEditorSettingsService: SqlEditorSettingsService,
   ) {
     super();
   }
 
   register(): void {
-    this.mainMenuService.registerRootItem(
-      {
-        id: 'sql-editor',
-        title: 'SQL',
-        order: 2,
-        onClick: this.openSQLEditor.bind(this),
-        isDisabled: () => this.isSQLEntryDisabled(),
-      }
-    );
+    this.registerTopAppBarItem();
 
     this.menuService.addCreator({
-      isApplicable: context => context.has(DATA_CONTEXT_SQL_EDITOR_STATE) && context.has(DATA_CONTEXT_SQL_EDITOR_TAB),
-      getItems: (context, items) => [
-        ...items,
-        ACTION_RENAME,
-      ],
+      contexts: [DATA_CONTEXT_SQL_EDITOR_STATE, DATA_CONTEXT_SQL_EDITOR_TAB],
+      getItems: (context, items) => [...items, ACTION_RENAME],
       orderItems: (context, items) => {
-        const actions = menuExtractActions(items, [
-          ACTION_RENAME,
-        ]);
+        const actions = menuExtractItems(items, [ACTION_RENAME]);
 
         if (actions.length > 0) {
           items.unshift(...actions);
@@ -77,63 +89,78 @@ export class SqlEditorBootstrap extends Bootstrap {
     });
 
     this.menuService.addCreator({
+      root: true,
+      contexts: [DATA_CONTEXT_CONNECTION],
       isApplicable: context => {
-        if (!context.has(DATA_CONTEXT_CONNECTION)) {
-          return false;
-        }
-
         const node = context.tryGet(DATA_CONTEXT_NAV_NODE);
 
         if (node && !node.objectFeatures.includes(EObjectFeature.dataSource)) {
           return false;
         }
 
-        return !context.has(DATA_CONTEXT_MENU_NESTED);
+        return true;
       },
-      getItems: (context, items) => [
-        ...items,
-        ACTION_SQL_EDITOR_OPEN,
-      ],
+      getItems: (context, items) => [...items, ACTION_SQL_EDITOR_OPEN],
     });
 
     this.actionService.addHandler({
       id: 'sql-editor',
-      isActionApplicable: (context, action) => (
-        (
-          action === ACTION_RENAME
-          && context.has(DATA_CONTEXT_SQL_EDITOR_STATE)
-          && context.has(DATA_CONTEXT_SQL_EDITOR_TAB)
-        ) || (
-          action === ACTION_SQL_EDITOR_OPEN
-          && context.has(DATA_CONTEXT_CONNECTION)
-        )
-      ),
+      isActionApplicable: (context, action) => {
+        if (action === ACTION_RENAME) {
+          const editorState = context.tryGet(DATA_CONTEXT_SQL_EDITOR_STATE);
+
+          if (!editorState) {
+            return false;
+          }
+
+          const dataSource = this.sqlDataSourceService.get(editorState.editorId);
+
+          return dataSource?.hasFeature(ESqlDataSourceFeatures.setName) ?? false;
+        }
+        return action === ACTION_SQL_EDITOR_OPEN && context.has(DATA_CONTEXT_CONNECTION);
+      },
       handler: async (context, action) => {
         switch (action) {
           case ACTION_RENAME: {
             const state = context.get(DATA_CONTEXT_SQL_EDITOR_STATE);
+            const dataSource = this.sqlDataSourceService.get(state.editorId);
+            const executionContext = dataSource?.executionContext;
 
-            const name = this.sqlEditorTabService.getName(state);
+            if (!dataSource) {
+              return;
+            }
+
+            let connection: Connection | undefined;
+
+            if (executionContext) {
+              connection = this.connectionInfoResource.get(createConnectionParam(executionContext.projectId, executionContext.connectionId));
+            }
+
+            const name = getSqlEditorName(state, dataSource, connection);
+            const regexp = /^(.*?)(\.\w+)$/gi.exec(name);
 
             const result = await this.commonDialogService.open(RenameDialog, {
-              value: name,
+              name: regexp?.[1] ?? name,
               objectName: name,
-              icon: '/icons/sql_script_m.svg',
-              validation: name => !this.sqlEditorTabService.sqlEditorTabs.some(tab => (
-                tab.handlerState.order !== state.order
-                && this.sqlEditorTabService.getName(tab.handlerState) === name.trim()
-              )),
+              icon: dataSource.icon,
+              validation: name =>
+                !this.sqlEditorTabService.sqlEditorTabs.some(
+                  tab => tab.handlerState.order !== state.order && this.sqlEditorService.getName(tab.handlerState) === name.trim(),
+                ) && dataSource.canRename(name),
             });
 
             if (result !== DialogueStateResult.Rejected && result !== DialogueStateResult.Resolved) {
-              state.name = (result ?? '').trim();
+              dataSource.setName((result ?? '').trim());
             }
             break;
           }
           case ACTION_SQL_EDITOR_OPEN: {
             const connection = context.get(DATA_CONTEXT_CONNECTION);
 
-            this.sqlEditorNavigatorService.openNewEditor({ connectionId: connection.id });
+            this.sqlEditorNavigatorService.openNewEditor({
+              dataSourceKey: LocalStorageSqlDataSource.key,
+              connectionKey: createConnectionParam(connection),
+            });
             break;
           }
         }
@@ -149,37 +176,114 @@ export class SqlEditorBootstrap extends Bootstrap {
     });
   }
 
-  load(): void { }
+  load(): void {}
 
-  private isSQLEntryDisabled() {
-    const activeView = this.viewService.activeView;
-    if (activeView) {
-      return !ExtensionUtils
-        .from(activeView.extensions)
-        .has(isConnectionProvider);
-    }
-    return !this.connectionSchemaManagerService.currentConnectionId;
+  private registerTopAppBarItem() {
+    this.menuService.addCreator({
+      menus: [MENU_APP_ACTIONS],
+      getItems: (context, items) => [...items, ACTION_SQL_EDITOR_NEW],
+      orderItems: (context, items) => {
+        let placeIndex = items.indexOf(ACTION_SQL_EDITOR_NEW);
+
+        const actionsOpen = menuExtractItems(items, [ACTION_SQL_EDITOR_NEW]);
+
+        const connectionsIndex = items.indexOf(MENU_CONNECTIONS);
+
+        if (connectionsIndex !== -1) {
+          placeIndex = connectionsIndex + 1;
+        }
+
+        items.splice(placeIndex, 0, ...actionsOpen);
+
+        return items;
+      },
+    });
+
+    this.actionService.addHandler({
+      id: 'sql-editor-new',
+      actions: [ACTION_SQL_EDITOR_NEW],
+      isLabelVisible: () => false,
+      getActionInfo: (context, action) => {
+        const connectionContext = this.getActiveConnectionContext();
+        const schemaAndCatalog = NodeManagerUtils.concatSchemaAndCatalog(connectionContext.catalogId, connectionContext.schemaId);
+
+        let tooltip = action.info.tooltip;
+
+        if (connectionContext.connectionKey) {
+          const connectionInfo = this.connectionInfoResource.get(connectionContext.connectionKey);
+
+          if (connectionInfo) {
+            tooltip = this.localizationService.translate(
+              'plugin_sql_editor_navigation_tab_action_sql_editor_new_tooltip_context',
+              'plugin_sql_editor_navigation_tab_action_sql_editor_new_tooltip',
+              {
+                connection: `${connectionInfo.name}${schemaAndCatalog ? ' ' + schemaAndCatalog : ''}`,
+              },
+            );
+          }
+        }
+
+        return {
+          ...action.info,
+          tooltip,
+        };
+      },
+      isHidden: (context, action) => {
+        if (action === ACTION_SQL_EDITOR_NEW) {
+          return this.sqlEditorSettingsService.disabled;
+        }
+
+        return false;
+      },
+      handler: (context, action) => {
+        switch (action) {
+          case ACTION_SQL_EDITOR_NEW: {
+            this.openSQLEditor();
+            break;
+          }
+        }
+      },
+    });
   }
 
-  private openSQLEditor() {
-    let connectionId: string | undefined;
+  private getActiveConnectionContext(): IActiveConnectionContext {
+    let connectionKey: IConnectionInfoParams | undefined;
     let catalogId: string | undefined;
     let schemaId: string | undefined;
 
-    const activeView = this.viewService.activeView;
-
-    if (activeView) {
+    for (const activeView of this.viewService.activeViews) {
       ExtensionUtils.from(activeView.extensions)
-        .on(isConnectionProvider, extension => { connectionId = extension(activeView.context); })
-        .on(isObjectCatalogProvider, extension => { catalogId = extension(activeView.context); })
-        .on(isObjectSchemaProvider, extension => { schemaId = extension(activeView.context); });
-    } else {
-      connectionId = this.connectionSchemaManagerService.currentConnectionId || undefined;
-      catalogId = this.connectionSchemaManagerService.currentObjectCatalogId;
-      schemaId = this.connectionSchemaManagerService.currentObjectSchemaId;
+        .on(isConnectionProvider, extension => {
+          connectionKey = extension(activeView.context);
+        })
+        .on(isObjectCatalogProvider, extension => {
+          catalogId = extension(activeView.context);
+        })
+        .on(isObjectSchemaProvider, extension => {
+          schemaId = extension(activeView.context);
+        });
+
+      if (connectionKey) {
+        break;
+      }
     }
 
-    this.sqlEditorNavigatorService.openNewEditor({ connectionId, catalogId, schemaId });
+    return {
+      connectionKey,
+      catalogId,
+      schemaId,
+    };
+  }
+
+  private openSQLEditor() {
+    const connectionContext = this.getActiveConnectionContext();
+
+    this.sqlEditorNavigatorService.openNewEditor({
+      dataSourceKey: LocalStorageSqlDataSource.key,
+      connectionKey: connectionContext.connectionKey,
+      catalogId: connectionContext.catalogId,
+      schemaId: connectionContext.schemaId,
+    });
   }
 
   private readonly handleAction: IExecutorHandler<ISessionAction | null> = (data, contexts) => {
@@ -188,8 +292,9 @@ export class SqlEditorBootstrap extends Bootstrap {
     if (isSessionActionOpenSQLEditor(data)) {
       try {
         this.sqlEditorNavigatorService.openNewEditor({
+          dataSourceKey: LocalStorageSqlDataSource.key,
           name: data['editor-name'],
-          connectionId: data['connection-id'],
+          connectionKey: createConnectionParam(data['project-id'], data['connection-id']),
           source: SQL_EDITOR_SOURCE_ACTION,
         });
       } finally {

@@ -1,13 +1,12 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { AdministrationItemService, AdministrationItemType, ConfigurationWizardService } from '@cloudbeaver/core-administration';
-import { injectable, Bootstrap } from '@cloudbeaver/core-di';
+import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 
 import { FinishPage } from './Finish/FinishPage';
 import { FinishPageDrawerItem } from './Finish/FinishPageDrawerItem';
@@ -21,9 +20,9 @@ import { WelcomePage } from './Welcome/WelcomePage';
 @injectable()
 export class ConfigurationWizardPagesBootstrapService extends Bootstrap {
   constructor(
-    private administrationItemService: AdministrationItemService,
-    private configurationWizardService: ConfigurationWizardService,
-    private serverConfigurationService: ServerConfigurationService
+    private readonly administrationItemService: AdministrationItemService,
+    private readonly configurationWizardService: ConfigurationWizardService,
+    private readonly serverConfigurationService: ServerConfigurationService,
   ) {
     super();
   }
@@ -47,17 +46,11 @@ export class ConfigurationWizardPagesBootstrapService extends Bootstrap {
         order: 1.5,
         onLoad: this.serverConfigurationService.loadConfig.bind(this.serverConfigurationService),
         isDone: this.serverConfigurationService.isDone.bind(this.serverConfigurationService),
-        onFinish: this.serverConfigurationService.saveConfiguration.bind(
-          this.serverConfigurationService,
-          false
-        ),
-        onConfigurationFinish: this.serverConfigurationService.saveConfiguration.bind(
-          this.serverConfigurationService,
-          true
-        ),
+        onFinish: this.serverConfigurationService.saveConfiguration.bind(this.serverConfigurationService, false),
+        onConfigurationFinish: this.serverConfigurationService.saveConfiguration.bind(this.serverConfigurationService, true),
       },
       order: 4,
-      onActivate: () => this.serverConfigurationService.loadConfig(),
+      onActivate: () => this.serverConfigurationService.activate(),
       onDeActivate: this.serverConfigurationService.deactivate.bind(this.serverConfigurationService),
       onLoad: this.serverConfigurationService.loadConfig.bind(this.serverConfigurationService, false),
       getContentComponent: () => ServerConfigurationPage,
@@ -76,5 +69,5 @@ export class ConfigurationWizardPagesBootstrapService extends Bootstrap {
     });
   }
 
-  load(): void | Promise<void> { }
+  load(): void | Promise<void> {}
 }

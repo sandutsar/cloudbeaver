@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,52 +18,60 @@ package io.cloudbeaver.server;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import io.cloudbeaver.DBWFeatureSet;
-import io.cloudbeaver.auth.provider.AuthProviderConfig;
-import io.cloudbeaver.auth.provider.local.LocalAuthProvider;
-import io.cloudbeaver.model.app.BaseWebAppConfiguration;
-import io.cloudbeaver.registry.WebFeatureRegistry;
+import io.cloudbeaver.DBWebException;
+import io.cloudbeaver.WebServiceUtils;
+import io.cloudbeaver.model.app.BaseAuthWebAppConfiguration;
+import io.cloudbeaver.model.app.WebAuthConfiguration;
+import io.cloudbeaver.registry.WebAuthProviderDescriptor;
+import io.cloudbeaver.registry.WebAuthProviderRegistry;
 import org.jkiss.code.NotNull;
-import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
+import org.jkiss.dbeaver.Log;
+import org.jkiss.dbeaver.model.connection.DBPDriver;
 import org.jkiss.dbeaver.model.navigator.DBNBrowseSettings;
 import org.jkiss.dbeaver.registry.DataSourceNavigatorSettings;
-import org.jkiss.dbeaver.registry.auth.AuthProviderDescriptor;
-import org.jkiss.dbeaver.registry.auth.AuthProviderRegistry;
 import org.jkiss.utils.ArrayUtils;
 import org.jkiss.utils.CommonUtils;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Application configuration
  */
-public class CBAppConfig extends BaseWebAppConfiguration {
-    public static final DataSourceNavigatorSettings DEFAULT_VIEW_SETTINGS = DataSourceNavigatorSettings.PRESET_FULL.getSettings();
+public class CBAppConfig extends BaseAuthWebAppConfiguration implements WebAuthConfiguration {
+    private static final Log log = Log.getLog(CBAppConfig.class);
+    public static final DataSourceNavigatorSettings.Preset PRESET_WEB = new DataSourceNavigatorSettings.Preset("web", "Web", "Default view");
+
+    public static final DataSourceNavigatorSettings DEFAULT_VIEW_SETTINGS = PRESET_WEB.getSettings();
 
     private boolean supportsCustomConnections;
     private boolean supportsConnectionBrowser;
     private boolean supportsUserWorkspaces;
     private boolean enableReverseProxyAuth;
+    private boolean forwardProxy;
     private boolean publicCredentialsSaveEnabled;
     private boolean adminCredentialsSaveEnabled;
+    private boolean linkExternalCredentialsWithUser;
 
     private boolean redirectOnFederatedAuth;
+    private boolean anonymousAccessEnabled;
+    private boolean grantConnectionsAccessToAnonymousTeam;
+    private boolean systemVariablesResolvingEnabled;
+    @Deprecated
+    private String anonymousUserRole;
+    private String anonymousUserTeam;
 
     private String[] enabledDrivers;
     private String[] disabledDrivers;
-    private String defaultAuthProvider;
-    private String[] enabledFeatures;
-    private String[] enabledAuthProviders;
     private DataSourceNavigatorSettings defaultNavigatorSettings;
-
-    private final Map<String, AuthProviderConfig> authConfiguration;
 
     private final Map<String, Object> resourceQuotas;
 
     public CBAppConfig() {
         super();
+        this.anonymousAccessEnabled = false;
+        this.anonymousUserRole = DEFAULT_APP_ANONYMOUS_TEAM_NAME;
+        this.anonymousUserTeam = DEFAULT_APP_ANONYMOUS_TEAM_NAME;
         this.supportsCustomConnections = true;
         this.supportsConnectionBrowser = false;
         this.supportsUserWorkspaces = false;
@@ -72,17 +80,20 @@ public class CBAppConfig extends BaseWebAppConfiguration {
         this.redirectOnFederatedAuth = false;
         this.enabledDrivers = new String[0];
         this.disabledDrivers = new String[0];
-        this.defaultAuthProvider = LocalAuthProvider.PROVIDER_ID;
-        this.enabledFeatures = null;
-        this.enabledAuthProviders = null;
         this.defaultNavigatorSettings = DEFAULT_VIEW_SETTINGS;
-        this.authConfiguration = new LinkedHashMap<>();
         this.resourceQuotas = new LinkedHashMap<>();
         this.enableReverseProxyAuth = false;
+        this.forwardProxy = false;
+        this.linkExternalCredentialsWithUser = true;
+        this.grantConnectionsAccessToAnonymousTeam = false;
+        this.systemVariablesResolvingEnabled = false;
     }
 
     public CBAppConfig(CBAppConfig src) {
         super(src);
+        this.anonymousAccessEnabled = src.anonymousAccessEnabled;
+        this.anonymousUserRole = src.anonymousUserRole;
+        this.anonymousUserTeam = src.anonymousUserTeam;
         this.supportsCustomConnections = src.supportsCustomConnections;
         this.supportsConnectionBrowser = src.supportsConnectionBrowser;
         this.supportsUserWorkspaces = src.supportsUserWorkspaces;
@@ -91,18 +102,31 @@ public class CBAppConfig extends BaseWebAppConfiguration {
         this.redirectOnFederatedAuth = src.redirectOnFederatedAuth;
         this.enabledDrivers = src.enabledDrivers;
         this.disabledDrivers = src.disabledDrivers;
-        this.defaultAuthProvider = src.defaultAuthProvider;
-        this.enabledFeatures = src.enabledFeatures;
-        this.enabledAuthProviders = src.enabledAuthProviders;
         this.defaultNavigatorSettings = src.defaultNavigatorSettings;
-        this.authConfiguration = new LinkedHashMap<>(src.authConfiguration);
         this.resourceQuotas = new LinkedHashMap<>(src.resourceQuotas);
         this.enableReverseProxyAuth = src.enableReverseProxyAuth;
+        this.forwardProxy = src.forwardProxy;
+        this.linkExternalCredentialsWithUser = src.linkExternalCredentialsWithUser;
+        this.grantConnectionsAccessToAnonymousTeam = src.grantConnectionsAccessToAnonymousTeam;
+        this.systemVariablesResolvingEnabled = src.systemVariablesResolvingEnabled;
     }
 
+    @Override
+    public boolean isAnonymousAccessEnabled() {
+        return anonymousAccessEnabled;
+    }
+
+    @Override
+    public String getAnonymousUserTeam() {
+        return CommonUtils.notNull(anonymousUserTeam, anonymousUserRole);
+    }
 
     public void setAnonymousAccessEnabled(boolean anonymousAccessEnabled) {
         this.anonymousAccessEnabled = anonymousAccessEnabled;
+    }
+
+    public void setResourceManagerEnabled(boolean resourceManagerEnabled) {
+        this.resourceManagerEnabled = resourceManagerEnabled;
     }
 
     public boolean isSupportsCustomConnections() {
@@ -145,10 +169,6 @@ public class CBAppConfig extends BaseWebAppConfiguration {
         return enabledDrivers;
     }
 
-    public void setEnabledDrivers(String[] enabledDrivers) {
-        this.enabledDrivers = enabledDrivers;
-    }
-
     public String[] getDisabledDrivers() {
         return disabledDrivers;
     }
@@ -157,55 +177,9 @@ public class CBAppConfig extends BaseWebAppConfiguration {
         this.disabledDrivers = disabledDrivers;
     }
 
-    public boolean isFeatureEnabled(String id) {
-        return ArrayUtils.contains(getEnabledFeatures(), id);
-    }
-
-    public boolean isFeaturesEnabled(String[] features) {
-        return ArrayUtils.containsAll(getEnabledFeatures(), features);
-    }
-
-    public String[] getEnabledFeatures() {
-        if (enabledFeatures == null) {
-            // No config - enable all features (+backward compatibility)
-            return WebFeatureRegistry.getInstance().getWebFeatures()
-                .stream().map(DBWFeatureSet::getId).toArray(String[]::new);
-        }
-        return enabledFeatures;
-    }
-
-    public void setEnabledFeatures(String[] enabledFeatures) {
-        this.enabledFeatures = enabledFeatures;
-    }
-
-    public boolean isAuthProviderEnabled(String id) {
-        return ArrayUtils.contains(getEnabledAuthProviders(), id);
-    }
-
-    public String getDefaultAuthProvider() {
-        return defaultAuthProvider;
-    }
-
-    public void setDefaultAuthProvider(String defaultAuthProvider) {
-        this.defaultAuthProvider = defaultAuthProvider;
-    }
-
-    public String[] getEnabledAuthProviders() {
-        if (enabledAuthProviders == null) {
-            // No config - enable all providers (+backward compatibility)
-            return AuthProviderRegistry.getInstance().getAuthProviders()
-                .stream().map(AuthProviderDescriptor::getId).toArray(String[]::new);
-        }
-        return enabledAuthProviders;
-    }
-
-    public void setEnabledAuthProviders(String[] enabledAuthProviders) {
-        this.enabledAuthProviders = enabledAuthProviders;
-    }
-
     public String[] getAllAuthProviders() {
-        return AuthProviderRegistry.getInstance().getAuthProviders()
-            .stream().map(AuthProviderDescriptor::getId).toArray(String[]::new);
+        return WebAuthProviderRegistry.getInstance().getAuthProviders()
+            .stream().map(WebAuthProviderDescriptor::getId).toArray(String[]::new);
     }
 
     public DBNBrowseSettings getDefaultNavigatorSettings() {
@@ -251,53 +225,25 @@ public class CBAppConfig extends BaseWebAppConfiguration {
     }
 
     public <T> T getResourceQuota(String quotaId) {
-        return (T) resourceQuotas.get(quotaId);
+        Object quota = resourceQuotas.get(quotaId);
+        if (quota instanceof String) {
+            quota = CommonUtils.toDouble(quota);
+        }
+        return (T) quota;
     }
 
     public <T> T getResourceQuota(String quotaId, T defaultValue) {
         if (resourceQuotas.containsKey(quotaId)) {
-            return (T) resourceQuotas.get(quotaId);
+            return (T) getResourceQuota(quotaId);
         } else {
             return defaultValue;
         }
     }
 
-
-    ////////////////////////////////////////////
-    // Auth provider configs
-
-    @NotNull
-    public Map<String, AuthProviderConfig> getAuthProviderConfigurations() {
-        synchronized (authConfiguration) {
-            return new LinkedHashMap<>(authConfiguration);
-        }
+    public boolean isLinkExternalCredentialsWithUser() {
+        return linkExternalCredentialsWithUser;
     }
 
-    @Nullable
-    public AuthProviderConfig getAuthProviderConfigurations(@NotNull String id) {
-        synchronized (authConfiguration) {
-            return authConfiguration.get(id);
-        }
-    }
-
-    public void setAuthProviderConfiguration(@NotNull String id, @NotNull AuthProviderConfig config) {
-        synchronized (authConfiguration) {
-            authConfiguration.put(id, config);
-        }
-    }
-
-    public void setAuthProvidersConfiguration(@NotNull Map<String, AuthProviderConfig> authProviders) {
-        synchronized (authConfiguration) {
-            authConfiguration.clear();
-            authConfiguration.putAll(authProviders);
-        }
-    }
-
-    public boolean deleteAuthProviderConfiguration(@NotNull String id) {
-        synchronized (authConfiguration) {
-            return authConfiguration.remove(id) != null;
-        }
-    }
 
     ////////////////////////////////////////////
     // Reverse proxy auth
@@ -306,4 +252,55 @@ public class CBAppConfig extends BaseWebAppConfiguration {
         return enableReverseProxyAuth;
     }
 
+    ////////////////////////////////////////////
+    // Forward proxy
+
+    public boolean isEnabledForwardProxy() {
+        return forwardProxy;
+    }
+
+
+    public boolean isGrantConnectionsAccessToAnonymousTeam() {
+        return grantConnectionsAccessToAnonymousTeam;
+    }
+
+
+    // we disable embedded drivers by default and enable it in enabled drivers list
+    // that's why we need so complicated logic for disabling drivers
+
+    public void updateDisabledDriversConfig(String[] disabledDriversConfig) {
+        Set<String> disabledIds = new LinkedHashSet<>(Arrays.asList(disabledDriversConfig));
+        Set<String> enabledIds = new LinkedHashSet<>(Arrays.asList(this.enabledDrivers));
+
+        // remove all disabled embedded drivers from enabled drivers list
+        enabledIds.removeAll(disabledIds);
+
+        // enable embedded driver if it is not in disabled drivers list
+        for (String driverId : this.disabledDrivers) {
+            if (disabledIds.contains(driverId)) {
+                // driver is also disabled
+                continue;
+            }
+            // driver is removed from disabled list
+            // we need to enable if it is embedded
+            try {
+                DBPDriver driver = WebServiceUtils.getDriverById(driverId);
+                if (driver.isEmbedded()) {
+                    enabledIds.add(driverId);
+                }
+            } catch (DBWebException e) {
+                log.error("Failed to find driver by id", e);
+            }
+        }
+        this.disabledDrivers = disabledDriversConfig;
+        this.enabledDrivers = enabledIds.toArray(String[]::new);
+    }
+
+    public boolean isDriverForceEnabled(@NotNull String driverId) {
+        return ArrayUtils.containsIgnoreCase(getEnabledDrivers(), driverId);
+    }
+
+    public boolean isSystemVariablesResolvingEnabled() {
+        return systemVariablesResolvingEnabled;
+    }
 }

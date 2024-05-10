@@ -1,26 +1,22 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./react-leaflet.d.ts" />
-
 import type geojson from 'geojson';
 import leaflet from 'leaflet';
 import { useCallback, useEffect, useState } from 'react';
-import { MapContainer, GeoJSON, LayersControl, TileLayer } from 'react-leaflet';
-import type { TileLayerProps } from 'react-leaflet';
-import styled, { css } from 'reshadow';
+import { GeoJSON, LayersControl, MapContainer, TileLayer, type TileLayerProps } from 'react-leaflet';
 
-import { useSplit } from '@cloudbeaver/core-blocks';
-import { useTranslate } from '@cloudbeaver/core-localization';
+import { s, useS, useSplit, useTranslate } from '@cloudbeaver/core-blocks';
 import type { IResultSetElementKey, IResultSetValue } from '@cloudbeaver/plugin-data-viewer';
 
-import baseStyles from './styles/base.scss';
+import styles from './LeafletMap.m.css';
+import './styles/base.scss';
 
 export interface IAssociatedValue {
   key: string;
@@ -42,8 +38,11 @@ interface IBaseTile extends TileLayerProps {
   checked?: boolean;
 }
 
+export type CrsKey = 'Simple' | 'EPSG:3857' | 'EPSG:4326' | 'EPSG:3395' | 'EPSG:900913';
+
 interface Props {
   geoJSON: IGeoJSONFeature[];
+  crsKey: CrsKey;
   getAssociatedValues: (cell: IResultSetElementKey) => IAssociatedValue[];
 }
 
@@ -58,9 +57,10 @@ const baseTiles: Record<'street' | 'topography', IBaseTile> = {
   },
   topography: {
     name: 'gis_presentation_base_tile_topography_name',
-    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>,'
-    + ' &copy; <a href="http://viewfinderpanoramas.org" target="_blank">SRTM</a>,'
-    + ' &copy; <a href="https://opentopomap.org" target="_blank">OpenTopoMap</a>',
+    attribution:
+      '&copy; <a href="http://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>,' +
+      ' &copy; <a href="http://viewfinderpanoramas.org" target="_blank">SRTM</a>,' +
+      ' &copy; <a href="https://opentopomap.org" target="_blank">OpenTopoMap</a>',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     maxZoom: 17,
   },
@@ -87,58 +87,54 @@ function polyStyle() {
   };
 }
 
-function getCRS(feature?: IGeoJSONFeature): leaflet.CRS {
-  switch (feature?.properties?.srid) {
-    case 0:
+function getCRS(crsKey: CrsKey): leaflet.CRS {
+  switch (crsKey) {
+    case 'Simple':
       return leaflet.CRS.Simple;
-    case 3857:
+    case 'EPSG:3857':
       return leaflet.CRS.EPSG3857;
-    case 4326:
+    case 'EPSG:4326':
       return leaflet.CRS.EPSG4326;
-    case 3395:
+    case 'EPSG:3395':
       return leaflet.CRS.EPSG3395;
-    case 900913:
+    case 'EPSG:900913':
       return leaflet.CRS.EPSG900913;
     default:
       return leaflet.CRS.EPSG3857;
   }
 }
 
-const styles = css`
-  MapContainer {
-    width: 100%;
-    height: 100%;
-  }
-`;
-
-export const LeafletMap: React.FC<Props> = function LeafletMap({ geoJSON, getAssociatedValues }) {
-  const splitContext = useSplit();
+export const LeafletMap: React.FC<Props> = function LeafletMap({ geoJSON, crsKey, getAssociatedValues }) {
+  const split = useSplit();
   const translate = useTranslate();
 
   const [mapRef, setMapRef] = useState<leaflet.Map | null>(null);
   const [geoJSONLayerRef, setGeoJSONLayerRef] = useState<leaflet.GeoJSON | null>(null);
 
-  const crs = getCRS(geoJSON[0]);
+  const crs = getCRS(crsKey);
 
-  const onEachFeature = useCallback((feature: IGeoJSONFeature, layer: leaflet.Layer) => {
-    const associatedValues = getAssociatedValues(feature.properties.associatedCell);
-    if (associatedValues.length > 0) {
-      let popupContent = '';
+  const onEachFeature = useCallback(
+    (feature: IGeoJSONFeature, layer: leaflet.Layer) => {
+      const associatedValues = getAssociatedValues(feature.properties.associatedCell);
+      if (associatedValues.length > 0) {
+        let popupContent = '';
 
-      popupContent += '<table>';
-      for (let i = 0; i < associatedValues.length; i++) {
-        const { key, value } = associatedValues[i];
+        popupContent += '<table>';
+        for (let i = 0; i < associatedValues.length; i++) {
+          const { key, value } = associatedValues[i];
 
-        if (value === undefined || typeof value === 'object') {
-          continue;
+          if (value === undefined || typeof value === 'object') {
+            continue;
+          }
+
+          popupContent += '<tr><td>' + key + '</td><td>' + value + '</td></tr>';
         }
-
-        popupContent += '<tr><td>' + key + '</td><td>' + value + '</td></tr>';
+        popupContent += '</table>';
+        layer.bindPopup(popupContent, popupOption);
       }
-      popupContent += '</table>';
-      layer.bindPopup(popupContent, popupOption);
-    }
-  }, [getAssociatedValues]);
+    },
+    [getAssociatedValues],
+  );
 
   useEffect(() => {
     if (geoJSONLayerRef && mapRef) {
@@ -171,17 +167,13 @@ export const LeafletMap: React.FC<Props> = function LeafletMap({ geoJSON, getAss
   useEffect(() => {
     if (mapRef) {
       mapRef.invalidateSize();
-
-      if (mapRef.options.crs?.code !== crs.code) {
-        const center = mapRef.getCenter();
-        mapRef.options.crs = crs;
-        mapRef.setView(center);
-      }
     }
-  }, [splitContext.isResizing, splitContext.mode, crs, mapRef]);
+  }, [split.state.isResizing, split.state.mode, mapRef]);
 
-  return styled(styles, baseStyles)(
-    <MapContainer crs={crs} whenCreated={setMapRef} zoom={12}>
+  const style = useS(styles);
+
+  return (
+    <MapContainer ref={setMapRef} className={s(style, { mapContainer: true })} crs={leaflet.CRS.EPSG3857} zoom={12}>
       <GeoJSON
         // data is not optional property, see react-leaflet.d.ts
         // data={[]}
@@ -192,10 +184,7 @@ export const LeafletMap: React.FC<Props> = function LeafletMap({ geoJSON, getAss
       />
       {crs !== leaflet.CRS.Simple && (
         <LayersControl>
-          <LayersControl.BaseLayer
-            name={translate(baseTiles.street.name)}
-            checked={baseTiles.street.checked}
-          >
+          <LayersControl.BaseLayer name={translate(baseTiles.street.name)} checked={baseTiles.street.checked}>
             <TileLayer
               attribution={baseTiles.street.attribution}
               url={baseTiles.street.url}
@@ -203,10 +192,7 @@ export const LeafletMap: React.FC<Props> = function LeafletMap({ geoJSON, getAss
               id={baseTiles.street.id}
             />
           </LayersControl.BaseLayer>
-          <LayersControl.BaseLayer
-            name={translate(baseTiles.topography.name)}
-            checked={baseTiles.topography.checked}
-          >
+          <LayersControl.BaseLayer name={translate(baseTiles.topography.name)} checked={baseTiles.topography.checked}>
             <TileLayer
               attribution={baseTiles.topography.attribution}
               url={baseTiles.topography.url}

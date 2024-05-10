@@ -1,12 +1,11 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { computed, observable, makeObservable } from 'mobx';
+import { computed, makeObservable, observable } from 'mobx';
 
 import type { ITask } from './ITask';
 import { Task } from './Task';
@@ -27,7 +26,7 @@ export interface IScheduleOptions {
 
 const queueLimit = 100;
 
-export class TaskScheduler<TIdentifier> {
+export class TaskScheduler<TIdentifier = void> {
   get activeList(): TIdentifier[] {
     return this.queue.map(task => task.id);
   }
@@ -41,13 +40,14 @@ export class TaskScheduler<TIdentifier> {
   private readonly isBlocked: BlockedExecution<TIdentifier> | null;
 
   constructor(isBlocked: BlockedExecution<TIdentifier> | null = null) {
+    this.queue = [];
+    this.isBlocked = isBlocked;
+
     makeObservable<TaskScheduler<TIdentifier>, 'queue'>(this, {
+      executing: computed,
       activeList: computed,
       queue: observable.shallow,
     });
-
-    this.queue = [];
-    this.isBlocked = isBlocked;
   }
 
   isExecuting(id: TIdentifier): boolean {
@@ -70,11 +70,7 @@ export class TaskScheduler<TIdentifier> {
     }
   }
 
-  schedule<T>(
-    id: TIdentifier,
-    promise: () => Promise<T>,
-    options?: IScheduleOptions,
-  ): ITask<T> {
+  schedule<T>(id: TIdentifier, promise: () => Promise<T>, options?: IScheduleOptions): ITask<T> {
     if (this.queue.length > queueLimit) {
       throw new Error('Execution queue limit is reached');
     }
@@ -119,11 +115,7 @@ export class TaskScheduler<TIdentifier> {
 
   private async execute<T>(container: ITaskContainer<TIdentifier, T>) {
     if (this.isBlocked) {
-      const queueList = this.queue.filter(
-        active =>
-          active !== container
-            && this.isBlocked!(active.id, container.id)
-      );
+      const queueList = this.queue.filter(active => active !== container && this.isBlocked!(active.id, container.id));
 
       for (const _container of queueList) {
         if (container.task.cancelled) {

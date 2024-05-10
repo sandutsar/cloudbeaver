@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,23 +41,34 @@ public class WebServiceBindingNavigator extends WebServiceBindingBase<DBWService
                 env.getArgument("parentPath"),
                 env.getArgument("offset"),
                 env.getArgument("limit"),
-                env.getArgument("onlyFolders")))
-        .dataFetcher("navNodeParents", env -> getService(env).getNavigatorNodeParents(
+                env.getArgument("onlyFolders")
+            ))
+            .dataFetcher("navNodeParents", env -> getService(env).getNavigatorNodeParents(
                 getWebSession(env),
-                env.getArgument("nodePath")))
+                env.getArgument("nodePath")
+            ))
             .dataFetcher("navNodeInfo", env -> getService(env).getNavigatorNodeInfo(
                 getWebSession(env),
-                env.getArgument("nodePath")))
+                env.getArgument("nodePath")
+            ))
             .dataFetcher("navRefreshNode", env -> getService(env).refreshNavigatorNode(
                 getWebSession(env),
                 env.getArgument("nodePath")
             ))
             .dataFetcher("navGetStructContainers", env -> getService(env).getStructContainers(
+                getProjectReference(env),
                 getWebConnection(env),
                 env.getArgument("contextId"),
                 env.getArgument("catalog")
+
             ));
         model.getMutationType()
+            .dataFetcher("navSetFolderFilter", env -> getService(env).setNavigatorNodeFilter(
+                getWebSession(env),
+                env.getArgument("nodePath"),
+                env.getArgument("include"),
+                env.getArgument("exclude")
+            ))
             .dataFetcher("navRenameNode", env -> getService(env).renameNode(
                 getWebSession(env),
                 env.getArgument("nodePath"),
@@ -66,6 +77,11 @@ public class WebServiceBindingNavigator extends WebServiceBindingBase<DBWService
             .dataFetcher("navDeleteNodes", env -> getService(env).deleteNodes(
                 getWebSession(env),
                 env.getArgument("nodePaths")
+            ))
+            .dataFetcher("navMoveNodesToFolder", env -> getService(env).moveNodesToFolder(
+                getWebSession(env),
+                env.getArgument("nodePaths"),
+                env.getArgument("folderPath")
             ));
 
         model.getRuntimeWiring().type(TypeRuntimeWiring.newTypeWiring("DatabaseObjectInfo")

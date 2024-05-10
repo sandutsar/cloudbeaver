@@ -4,15 +4,17 @@
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <layout class="ch.qos.logback.classic.PatternLayout">
             <Pattern>
-                %d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n
+                %d{dd-MM-yyyy HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n
             </Pattern>
         </layout>
     </appender>
 
     <!-- Disable logback status messages -->
-    <statusListener class="ch.qos.logback.core.status.NopStatusListener" />
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+    <logger name="org.jkiss" level="DEBUG"/>
+    <logger name="io.cloudbeaver" level="DEBUG"/>
 
-    <root level="info">
+    <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>
 

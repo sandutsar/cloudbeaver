@@ -1,34 +1,18 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useRef } from 'react';
-import {
-  useMenuState,
-  Menu,
-  MenuItem,
-  MenuButton
-} from 'reakit/Menu';
-import styled, { css } from 'reshadow';
+import { Menu, MenuButton, MenuItem, useMenuState } from 'reakit/Menu';
 
-import { useStyles } from '@cloudbeaver/core-theming';
-
-import { BASE_DROPDOWN_STYLES } from '../FormControls/BASE_DROPDOWN_STYLES';
-
-const styles = css`
-  MenuButton {
-    composes: theme-ripple from global;
-    background: transparent;
-    outline: none;
-    padding: 4px;
-    cursor: pointer;
-  }
-`;
+import { BaseDropdownStyles } from '..';
+import { s } from '../s';
+import { useS } from '../useS';
+import classes from './PropertyValueSelector.m.css';
 
 interface Props {
   propertyName?: string;
@@ -39,7 +23,7 @@ interface Props {
   onSwitch: (state: boolean) => void;
 }
 
-export const PropertyValueSelector = observer<Props>(function PropertyValueSelector({
+export const PropertyValueSelector = observer<React.PropsWithChildren<Props>>(function PropertyValueSelector({
   propertyName,
   values,
   container,
@@ -48,6 +32,7 @@ export const PropertyValueSelector = observer<Props>(function PropertyValueSelec
   onSelect,
   onSwitch,
 }) {
+  const styles = useS(classes, BaseDropdownStyles);
   const menuRef = useRef<HTMLDivElement>(null);
   const menu = useMenuState({
     placement: 'bottom-end',
@@ -58,7 +43,7 @@ export const PropertyValueSelector = observer<Props>(function PropertyValueSelec
       menu.hide();
       onSelect(event.currentTarget.id);
     },
-    [menu, onSelect]
+    [menu, onSelect],
   );
   useEffect(() => onSwitch(menu.visible), [menu.visible]);
 
@@ -71,7 +56,7 @@ export const PropertyValueSelector = observer<Props>(function PropertyValueSelec
       const containerSize = container.getBoundingClientRect();
       if (menuRef.current && containerSize !== undefined) {
         // 1px offset of MenuButton
-        menuRef.current.style.width = (containerSize.width - 1) + 'px';
+        menuRef.current.style.width = containerSize.width - 1 + 'px';
       }
     });
 
@@ -84,15 +69,18 @@ export const PropertyValueSelector = observer<Props>(function PropertyValueSelec
 
   const visible = menu.visible;
 
-  return styled(useStyles(BASE_DROPDOWN_STYLES, styles))(
+  return (
     <>
-      <MenuButton {...menu} className={className} visible={visible}>{children}</MenuButton>
-      <Menu {...menu} ref={menuRef} visible={visible} aria-label={propertyName} modal>
-        {visible && values.map(value => (
-          <MenuItem key={value} id={value} type='button' {...menu} onClick={handleMenuSelect}>
-            {value}
-          </MenuItem>
-        ))}
+      <MenuButton {...menu} className={s(styles, { menuButton: true }, className)} visible={visible}>
+        {children}
+      </MenuButton>
+      <Menu className={s(styles, { menu: true })} {...menu} ref={menuRef} visible={visible} aria-label={propertyName} modal>
+        {visible &&
+          values.map(value => (
+            <MenuItem key={value} className={s(styles, { menuItem: true })} id={value} type="button" {...menu} onClick={handleMenuSelect}>
+              {value}
+            </MenuItem>
+          ))}
       </Menu>
     </>
   );

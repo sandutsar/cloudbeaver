@@ -1,17 +1,16 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observable } from 'mobx';
 
 import { injectable } from '@cloudbeaver/core-di';
 import { Executor, IExecutor } from '@cloudbeaver/core-executor';
-import { getErrorDetails, GQLError } from '@cloudbeaver/core-sdk';
-import { OrderedMap } from '@cloudbeaver/core-utils';
+import { DetailsError, GQLError } from '@cloudbeaver/core-sdk';
+import { errorOf, OrderedMap } from '@cloudbeaver/core-utils';
 
 import { EventsSettingsService } from './EventsSettingsService';
 import {
@@ -19,13 +18,15 @@ import {
   INotification,
   INotificationExtraProps,
   INotificationOptions,
-  NotificationComponent,
   INotificationProcessExtraProps,
-  IProcessNotificationContainer
+  IProcessNotificationContainer,
+  NotificationComponent,
 } from './INotification';
 import { ProcessNotificationController } from './ProcessNotificationController';
 
 export const DELAY_DELETING = 1000;
+const TIMESTAMP_DIFFERENCE_THRESHOLD = 100;
+
 @injectable()
 export class NotificationService {
   // todo change to common new Map()
@@ -38,21 +39,34 @@ export class NotificationService {
     return this.notificationList.values.filter(notification => !notification.isSilent);
   }
 
-  constructor(
-    private settings: EventsSettingsService
-  ) {
+  constructor(private readonly settings: EventsSettingsService) {
     this.notificationList = new OrderedMap<number, INotification<any>>(({ id }) => id);
     this.closeTask = new Executor();
     this.notificationNextId = 0;
   }
 
   notify<TProps extends INotificationExtraProps<any> = INotificationExtraProps>(
-    options: INotificationOptions<TProps>, type: ENotificationType
+    options: INotificationOptions<TProps>,
+    type: ENotificationType,
   ): INotification<TProps> {
     if (options.persistent) {
       const persistentNotifications = this.notificationList.values.filter(value => value.persistent);
-      if (persistentNotifications.length >= this.settings.settings.getValue('maxPersistentAllow')) {
-        throw new Error(`You cannot create more than ${this.settings.settings.getValue('maxPersistentAllow')} persistent notification`);
+
+      const maxPersistentAllow = this.settings.maxPersistentAllow;
+
+      if (persistentNotifications.length >= maxPersistentAllow) {
+        throw new Error(`You cannot create more than ${maxPersistentAllow} persistent notification`);
+      }
+    }
+
+    if (options.details !== undefined) {
+      const currentTime = options.timestamp || Date.now();
+      const previousNotification = this.notificationList.values.reverse().find(notification => notification.details === options.details);
+
+      if (previousNotification) {
+        if (currentTime - previousNotification.timestamp < TIMESTAMP_DIFFERENCE_THRESHOLD) {
+          return previousNotification;
+        }
       }
     }
 
@@ -74,7 +88,8 @@ export class NotificationService {
       details: options.details,
       isSilent: !!options.isSilent,
       customComponent: options.customComponent,
-      extraProps: options.extraProps || {} as TProps,
+      extraProps: options.extraProps || ({} as TProps),
+      autoClose: options.autoClose,
       persistent: options.persistent,
       state: observable({ deleteDelay: 0 }),
       timestamp: options.timestamp || Date.now(),
@@ -90,7 +105,9 @@ export class NotificationService {
 
     const filteredNotificationList = this.notificationList.values.filter(notification => !notification.persistent);
 
-    if (filteredNotificationList.length > this.settings.settings.getValue('notificationsPool')) {
+    const notificationsPool = this.settings.notificationsPool;
+
+    if (filteredNotificationList.length > notificationsPool) {
       let i = 0;
       while (this.notificationList.get(this.notificationList.keys[i])?.persistent) {
         i++;
@@ -101,65 +118,87 @@ export class NotificationService {
     return notification;
   }
 
-  customNotification<
-    TProps extends INotificationExtraProps<any> = INotificationExtraProps
-  >(
+  customNotification<TProps extends INotificationExtraProps<any> = INotificationExtraProps>(
     component: () => NotificationComponent<TProps>,
     props?: TProps extends any ? TProps : never, // some magic
-    options?: INotificationOptions<TProps> & { type?: ENotificationType }
+    options?: INotificationOptions<TProps> & { type?: ENotificationType },
   ): INotification<TProps> {
-    return this.notify({
-      title: '',
-      ...options,
-      customComponent: component,
-      extraProps: props || {} as TProps,
-    }, options?.type ?? ENotificationType.Custom);
+    return this.notify(
+      {
+        title: '',
+        ...options,
+        customComponent: component,
+        extraProps: props || ({} as TProps),
+      },
+      options?.type ?? ENotificationType.Custom,
+    );
   }
 
-  processNotification<
-    TProps extends INotificationProcessExtraProps<any> = INotificationExtraProps>(
+  processNotification<TProps extends INotificationProcessExtraProps<any> = INotificationExtraProps>(
     component: () => NotificationComponent<TProps>,
     props?: TProps extends any ? TProps : never, // some magic,
-    options?: INotificationOptions<TProps>
+    options?: INotificationOptions<TProps>,
   ): IProcessNotificationContainer<TProps> {
     const processController = props?.state || new ProcessNotificationController();
 
-    const notification = this.notify({
-      title: '',
-      ...options,
-      extraProps: { ...props, state: processController } as TProps,
-      customComponent: component,
-    }, ENotificationType.Custom);
+    const notification = this.notify(
+      {
+        title: '',
+        ...options,
+        extraProps: { ...props, state: processController } as TProps,
+        customComponent: component,
+      },
+      ENotificationType.Custom,
+    );
 
     processController.init(notification.title, notification.message);
     return { controller: processController, notification };
   }
 
-  logInfo<T>(notification: INotificationOptions<T>): INotification<T> {
+  logInfo<T extends INotificationExtraProps<any>>(notification: INotificationOptions<T>): INotification<T> {
     return this.notify(notification, ENotificationType.Info);
   }
 
-  logSuccess<T>(notification: INotificationOptions<T>): INotification<T> {
+  logSuccess<T extends INotificationExtraProps<any>>(notification: INotificationOptions<T>): INotification<T> {
     return this.notify(notification, ENotificationType.Success);
   }
 
-  logError<T>(notification: INotificationOptions<T>): INotification<T> {
+  logError<T extends INotificationExtraProps<any>>(notification: INotificationOptions<T>): INotification<T> {
     return this.notify(notification, ENotificationType.Error);
   }
 
-  logException(exception: Error | GQLError, title?: string, message?: string, silent?: boolean): void {
-    const errorDetails = getErrorDetails(exception);
+  logException(exception: Error | GQLError | undefined | null, title?: string, message?: string, silent?: boolean): void {
+    const errorDetails = errorOf(exception, DetailsError);
 
     if (!silent) {
+      const hasDetails = errorDetails?.hasDetails() ?? false;
+
+      if (hasDetails) {
+        if (!title) {
+          title = exception?.name;
+        }
+
+        if (!message) {
+          message = exception?.message;
+        }
+      }
+
       this.logError({
-        title: title || errorDetails.name,
-        message: message || errorDetails.message,
-        details: errorDetails.hasDetails ? exception : undefined,
+        title: title || 'ui_unexpected_error',
+        message: message || 'core_blocks_exception_message_error_message',
+        details: exception,
         isSilent: silent,
       });
     }
+  }
 
-    console.error(exception);
+  throwSilently(exception: Error | GQLError | undefined | null): void {
+    this.logError({
+      title: '',
+      details: exception,
+      isSilent: true,
+    });
+    throw exception;
   }
 
   close(id: number, delayDeleting = true): void {

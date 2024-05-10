@@ -56,10 +56,14 @@ type DatabaseObjectInfo {
 type NavigatorNodeInfo {
     # Node ID - generally a full path to the node from root of tree
     id: ID!
+    # Node URI - a unique path to a node including all parent nodes
+    # uri: ID! @since(version: "23.3.1")
     # Node human readable name
     name: String
     #Node full name
-    fullName: String
+    fullName: String @deprecated # Use name parameter (23.2.0)
+    #Node plain name (23.2.0)
+    plainName: String
     # Node icon path
     icon: String
     # Node description
@@ -67,10 +71,16 @@ type NavigatorNodeInfo {
     # Node type
     nodeType: String
     # Can this property have child nodes?
-    hasChildren: Boolean
+    hasChildren: Boolean!
+    # Project id of the node
+    projectId: String
 
     # Associated object. Maybe null for non-database objects
     object: DatabaseObjectInfo
+
+    # Associated object. Return value depends on the node type - connectionId for connection node, resource path for resource node, etc.
+    # null - if node currently not support this property
+    objectId: String @since(version: "23.2.4")
 
     # Supported features: item, container, leaf
     # canDelete, canRename
@@ -80,9 +90,18 @@ type NavigatorNodeInfo {
     # If is different than properties. It doesn't perform any expensive operation and doesn't require authentication.
     nodeDetails: [ ObjectPropertyInfo! ]
 
-    folder: Boolean
-    inline: Boolean
-    navigable: Boolean
+    folder: Boolean!
+    inline: Boolean!
+    navigable: Boolean!
+    filtered: Boolean!
+
+    # Reads node filter. Expensive invocation, read only when it is really needed
+    filter: NavigatorNodeFilter
+}
+
+type NavigatorNodeFilter {
+    include: [String!]
+    exclude: [String!]
 }
 
 type DatabaseCatalog {
@@ -91,6 +110,7 @@ type DatabaseCatalog {
 }
 
 type DatabaseStructContainers {
+    parentNode: NavigatorNodeInfo
     catalogList: [ DatabaseCatalog! ]!
     schemaList: [ NavigatorNodeInfo! ]!
     supportsCatalogChange: Boolean!
@@ -110,15 +130,15 @@ extend type Query {
         limit: Int,
         onlyFolders: Boolean): [ NavigatorNodeInfo! ]!
 
-    # Get child nodes
-    navNodeParents(nodePath: ID!): [ NavigatorNodeInfo! ]!
+    # Get node's parents
+    navNodeParents( nodePath: ID! ): [ NavigatorNodeInfo! ]!
 
     navNodeInfo( nodePath: ID! ): NavigatorNodeInfo!
 
     navRefreshNode( nodePath: ID! ): Boolean
 
     # contextId currently not using
-    navGetStructContainers( connectionId: ID!, contextId: ID, catalog: ID ): DatabaseStructContainers!
+    navGetStructContainers( projectId: ID, connectionId: ID!, contextId: ID, catalog: ID ): DatabaseStructContainers!
 
 }
 
@@ -129,5 +149,12 @@ extend type Mutation {
 
     # Deletes nodes with specified IDs and returns number of deleted nodes
     navDeleteNodes( nodePaths: [ID!]! ): Int
+
+    # Moves nodes with specified IDs to the connection folder
+    navMoveNodesToFolder( nodePaths: [ID!]!, folderPath: ID!): Boolean!
+
+    # Sets filter for the folder node. If both include and exclude are null then filter is removed.
+    # Node must be refreshed after applying filters. Node children can be changed
+    navSetFolderFilter( nodePath: ID!, include: [String!], exclude: [String!]): Boolean!
 
 }

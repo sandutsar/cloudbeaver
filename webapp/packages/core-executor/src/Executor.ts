@@ -1,14 +1,12 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { flat } from '@cloudbeaver/core-utils';
-
 import { ExecutionContext } from './ExecutionContext';
+import { executionExceptionContext } from './executionExceptionContext';
 import { ExecutorHandlersCollection } from './ExecutorHandlersCollection';
 import { ExecutorInterrupter, IExecutorInterrupter } from './ExecutorInterrupter';
 import type { IExecutionContext, IExecutionContextProvider } from './IExecutionContext';
@@ -24,10 +22,7 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
 
   private readonly scheduler: TaskScheduler<T>;
 
-  constructor(
-    private readonly defaultData: T | null = null,
-    isBlocked: BlockedExecution<T> | null = null
-  ) {
+  constructor(private readonly defaultData: T | null = null, isBlocked: BlockedExecution<T> | null = null) {
     super();
     this.scheduler = new TaskScheduler(isBlocked);
   }
@@ -35,30 +30,38 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
   async execute(
     data: T,
     context?: IExecutionContext<T>,
-    scope?: IExecutorHandlersCollection<T> | Array<IExecutorHandlersCollection<T>>
+    scope?: IExecutorHandlersCollection<T> | Array<IExecutorHandlersCollection<T>>,
   ): Promise<IExecutionContextProvider<T>> {
+    if (context && ExecutorInterrupter.isInterrupted(context)) {
+      return context;
+    }
+
     data = this.getDefaultData(data);
 
     return await this.scheduler.schedule(data, async () => {
       if (!context) {
         context = new ExecutionContext(data);
       }
-      return this.executeHandlersCollection<T>(this, data, context, flat([(scope || [])]));
+      return this.executeHandlersCollection<T>(this, data, context, [scope || []].flat());
     });
   }
 
   async executeScope(
     data: T,
     scope?: IExecutorHandlersCollection<T> | Array<IExecutorHandlersCollection<T>>,
-    context?: IExecutionContext<T>
+    context?: IExecutionContext<T>,
   ): Promise<IExecutionContextProvider<T>> {
+    if (context && ExecutorInterrupter.isInterrupted(context)) {
+      return context;
+    }
+
     data = this.getDefaultData(data);
 
     return await this.scheduler.schedule(data, async () => {
       if (!context) {
         context = new ExecutionContext(data);
       }
-      return this.executeHandlersCollection<T>(this, data, context, flat([(scope || [])]));
+      return this.executeHandlersCollection<T>(this, data, context, [scope || []].flat());
     });
   }
 
@@ -66,10 +69,17 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
     collection: IExecutorHandlersCollection<T>,
     data: T,
     context: IExecutionContext<T>,
-    scoped: Array<IExecutorHandlersCollection<T>>
+    scoped: Array<IExecutorHandlersCollection<T>>,
   ): Promise<IExecutionContextProvider<T>> {
-    const interrupter = context.getContext(ExecutorInterrupter.interruptContext);
     scoped = [...collection.collections, ...scoped];
+
+    context.addContextCreators(collection.contextCreators as any);
+
+    for (const scope of scoped) {
+      context.addContextCreators(scope.contextCreators as any);
+    }
+
+    const interrupter = context.getContext(ExecutorInterrupter.interruptContext);
 
     await this.executeChain(collection, data, context, 'before');
 
@@ -83,6 +93,10 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
       for (const scope of scoped) {
         await this.executeHandlers(data, context, scope.handlers, interrupter);
       }
+    } catch (exception: any) {
+      const exceptionContext = context.getContext(executionExceptionContext);
+      exceptionContext.setException(exception);
+      throw exception;
     } finally {
       await this.executeHandlers(data, context, collection.postHandlers);
 
@@ -103,7 +117,7 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
     collection: IExecutorHandlersCollection<T>,
     data: T,
     context: IExecutionContext<T>,
-    type: ChainLinkType
+    type: ChainLinkType,
   ): Promise<void> {
     const interrupter = context.getContext(ExecutorInterrupter.interruptContext);
 
@@ -112,15 +126,14 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
         return;
       }
 
+      if (link.filter && !link.filter(data, context)) {
+        continue;
+      }
+
       const mappedData = link.map ? link.map(data, context) : data;
       const chainedContext = new ExecutionContext(mappedData, context);
 
-      await this.executeHandlersCollection(
-        link.executor,
-        mappedData,
-        chainedContext,
-        flat([(collection.getLinkHandlers(link.executor) || [])])
-      );
+      await this.executeHandlersCollection(link.executor, mappedData, chainedContext, [collection.getLinkHandlers(link.executor) || []].flat());
     }
   }
 
@@ -128,7 +141,7 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
     data: T,
     context: IExecutionContext<T>,
     handlers: Array<IExecutorHandler<any>>,
-    interrupter?: IExecutorInterrupter
+    interrupter?: IExecutorInterrupter,
   ): Promise<void> {
     for (const handler of handlers) {
       if (interrupter?.interrupted) {
@@ -151,10 +164,11 @@ export class Executor<T = void> extends ExecutorHandlersCollection<T> implements
     }
 
     const data = this.initialDataGetter();
-    
+
     this.scheduler.schedule(data, async () => {
       const context = new ExecutionContext(data);
-      
+      context.addContextCreators(this.contextCreators as any);
+
       try {
         await handler(data, context);
       } finally {

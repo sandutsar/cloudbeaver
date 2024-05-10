@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import io.cloudbeaver.utils.CBModelConstants;
 import org.jkiss.code.NotNull;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.data.*;
-import org.jkiss.dbeaver.model.data.storage.ExternalContentStorage;
 import org.jkiss.dbeaver.model.exec.DBCException;
 import org.jkiss.dbeaver.model.exec.DBCSession;
 import org.jkiss.dbeaver.model.gis.DBGeometry;
@@ -32,14 +31,12 @@ import org.jkiss.dbeaver.model.gis.GisConstants;
 import org.jkiss.dbeaver.model.gis.GisTransformUtils;
 import org.jkiss.dbeaver.model.struct.DBSAttributeBase;
 import org.jkiss.dbeaver.model.struct.DBSTypedObject;
-import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.utils.ContentUtils;
 import org.jkiss.dbeaver.utils.GeneralUtils;
 import org.jkiss.utils.Base64;
 import org.jkiss.utils.CommonUtils;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -64,7 +61,7 @@ public class WebSQLUtils {
             return cellValue;
         }
         if (cellValue instanceof Date) {
-            return CBModelConstants.ISO_DATE_FORMAT.format(cellValue);
+            return CBModelConstants.ISO_DATE_FORMAT.format(((Date) cellValue).toInstant());
         } else if (cellValue instanceof Number) {
             if (cellValue instanceof Double) {
                 return CommonUtils.niceFormatDouble((Double) cellValue);
@@ -90,7 +87,7 @@ public class WebSQLUtils {
                 return serializeContentValue(session, (DBDContent)dbValue);
             }
         }
-        return cellValue == null ? null : cellValue.toString();
+        return cellValue == null ? null : serializeStringValue(cellValue);
     }
 
     private static Object serializeComplexValue(WebSession session, DBSTypedObject type, DBDComplexValue value, WebDataFormat dataFormat) throws DBCException {
@@ -153,6 +150,13 @@ public class WebSQLUtils {
         Map<String, Object> map = createMapOfType(WebSQLConstants.VALUE_TYPE_CONTENT);
         if (ContentUtils.isTextContent(value)) {
             String stringValue = ContentUtils.getContentStringValue(session.getProgressMonitor(), value);
+            int textPreviewMaxLength = CommonUtils.toInt(
+                CBApplication.getInstance().getAppConfiguration().getResourceQuota(
+                    WebSQLConstants.QUOTA_PROP_TEXT_PREVIEW_MAX_LENGTH,
+                    WebSQLConstants.TEXT_PREVIEW_MAX_LENGTH));
+            if (stringValue != null && stringValue.length() > textPreviewMaxLength) {
+                stringValue =  stringValue.substring(0, textPreviewMaxLength);
+            }
             map.put(WebSQLConstants.ATTR_TEXT, stringValue);
         } else {
             map.put(WebSQLConstants.ATTR_BINARY, true);
@@ -202,6 +206,27 @@ public class WebSQLUtils {
         return map;
     }
 
+    /**
+     * Serializes original value from db to web form
+     *
+     * @param value original value
+     * @return web form value
+     */
+    public static Object serializeStringValue(Object value) {
+        int textPreviewMaxLength = CommonUtils.toInt(
+            CBApplication.getInstance().getAppConfiguration().getResourceQuota(
+                WebSQLConstants.QUOTA_PROP_TEXT_PREVIEW_MAX_LENGTH,
+                WebSQLConstants.TEXT_PREVIEW_MAX_LENGTH));
+        String stringValue = value.toString();
+        if (stringValue.length() < textPreviewMaxLength) {
+            return value.toString();
+        }
+        Map<String, Object> map = createMapOfType(WebSQLConstants.VALUE_TYPE_CONTENT);
+        map.put(WebSQLConstants.ATTR_TEXT, stringValue.substring(0, textPreviewMaxLength));
+        map.put("contentLength", GeneralUtils.convertToBytes(stringValue).length);
+        return map;
+    }
+
     public static Object makePlainCellValue(DBCSession session, DBSTypedObject attribute, Object value) throws DBCException {
         if (value instanceof Map) {
             Map<String, Object> map = (Map<String, Object>) value;
@@ -210,24 +235,9 @@ public class WebSQLUtils {
                 switch ((String)typeAttr) {
                     case WebSQLConstants.VALUE_TYPE_CONTENT: {
                         if (map.get(WebSQLConstants.ATTR_BINARY) != null) {
-                            DBDContentStorage storage;
-                            File openFile = new File(WebSQLDataLOBReceiver.DATA_EXPORT_FOLDER, (String) map.get("fileName"));
-                            Object tempValue = ((DBDAttributeBinding) attribute).getValueHandler().getValueFromObject(
-                                    session,
-                                    attribute,
-                                    null, false, true);
-                            storage = new ExternalContentStorage(DBWorkbench.getPlatform(), openFile);
-                            if (tempValue instanceof DBDContent) {
-                                try {
-                                    ((DBDContent) tempValue).updateContents(session.getProgressMonitor(), storage);
-                                } catch (Exception e) {
-                                    throw new DBCException("Error with inserting file into DB");
-                                }
-                            }
-                            value = tempValue;
-                        } else {
-                            value = map.get(WebSQLConstants.ATTR_TEXT);
+                            throw new DBCException("Binary content edit is not supported yet");
                         }
+                        value = map.get(WebSQLConstants.ATTR_TEXT);
                         break;
                     }
                     default: {

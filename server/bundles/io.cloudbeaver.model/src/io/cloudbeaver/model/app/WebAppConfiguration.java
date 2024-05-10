@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,13 @@ import java.util.Map;
  * Application configuration
  */
 public interface WebAppConfiguration {
-    String getAnonymousUserRole();
+    String getAnonymousUserTeam();
 
     boolean isAnonymousAccessEnabled();
 
     <T> T getResourceQuota(String quotaId);
 
-    String getDefaultUserRole();
+    String getDefaultUserTeam();
 
     <T> T getPluginOption(@NotNull String pluginId, @NotNull String option);
 
@@ -38,4 +38,11 @@ public interface WebAppConfiguration {
 
     boolean isResourceManagerEnabled();
 
+    boolean isFeaturesEnabled(String[] requiredFeatures);
+
+    boolean isFeatureEnabled(String id);
+
+    default boolean isSupportsCustomConnections() {
+        return true;
+    }
 }

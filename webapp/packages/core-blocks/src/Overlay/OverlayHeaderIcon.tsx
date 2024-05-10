@@ -1,17 +1,14 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import styled from 'reshadow';
-
-import { useStyles } from '@cloudbeaver/core-theming';
-
 import { IconOrImage } from '../IconOrImage';
-import { OVERLAY_BASE_STYLES } from './OVERLAY_BASE_STYLES';
+import { s } from '../s';
+import { useS } from '../useS';
+import style from './OverlayHeaderIcon.m.css';
 
 interface Props {
   icon?: string;
@@ -19,17 +16,17 @@ interface Props {
   className?: string;
 }
 
-export const OverlayHeaderIcon: React.FC<Props> = function OverlayHeaderIcon({ icon, viewBox, className, children }) {
-  const style = useStyles(OVERLAY_BASE_STYLES);
+export const OverlayHeaderIcon: React.FC<React.PropsWithChildren<Props>> = function OverlayHeaderIcon({ icon, viewBox, className, children }) {
+  const styles = useS(style);
 
   if (!icon && !children) {
     return null;
   }
 
-  return styled(style)(
-    <icon-container className={className}>
-      {icon && <IconOrImage icon={icon} viewBox={viewBox} />}
+  return (
+    <div className={s(styles, { iconContainer: true }, className)}>
+      {icon && <IconOrImage className={s(styles, { iconOrImage: true })} icon={icon} viewBox={viewBox} />}
       {children}
-    </icon-container>
+    </div>
   );
 };

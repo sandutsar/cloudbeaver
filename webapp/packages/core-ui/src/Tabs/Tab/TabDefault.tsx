@@ -1,19 +1,17 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { useContext, useMemo } from 'react';
 
-import { useMemo } from 'react';
-import styled from 'reshadow';
-
-import { Translate } from '@cloudbeaver/core-localization';
-import { ComponentStyle, useStyles } from '@cloudbeaver/core-theming';
+import { Translate } from '@cloudbeaver/core-blocks';
 
 import { TabContext } from '../TabContext';
 import type { ITabData } from '../TabsContainer/ITabsContainer';
+import { TabsContext } from '../TabsContext';
 import { Tab } from './Tab';
 import { TabIcon } from './TabIcon';
 import type { TabProps } from './TabProps';
@@ -25,7 +23,6 @@ interface Props<T = Record<string, any>> {
   name?: string;
   component?: React.FC<TabProps & T>;
   className?: string;
-  style?: ComponentStyle;
   disabled?: boolean;
   onOpen?: (tab: ITabData<any>) => void;
   onClose?: (tab: ITabData<any>) => void;
@@ -37,14 +34,14 @@ export function TabDefault<T = Record<string, any>>({
   name,
   component,
   className,
-  style,
   disabled,
   onOpen,
   onClose,
   ...rest
 }: Props<T> & T): React.ReactElement | null {
-  const styles = useStyles(style);
+  const state = useContext(TabsContext);
   const tabContext = useMemo(() => ({ tabId }), [tabId]);
+  const selected = state?.state.selectedId === tabId;
 
   if (component) {
     const TabComponent = component;
@@ -54,7 +51,7 @@ export function TabDefault<T = Record<string, any>>({
           tabId={tabId}
           className={className}
           {...(rest as unknown as T)}
-          style={style}
+          selected={selected}
           disabled={disabled}
           onOpen={onOpen}
           onClose={onClose}
@@ -63,10 +60,14 @@ export function TabDefault<T = Record<string, any>>({
     );
   }
 
-  return styled(styles)(
-    <Tab tabId={tabId} className={className} style={style} disabled={disabled} onOpen={onOpen} onClose={onClose}>
+  return (
+    <Tab tabId={tabId} className={className} selected={selected} disabled={disabled} onOpen={onOpen} onClose={onClose}>
       {icon && <TabIcon icon={icon} />}
-      {name && <TabTitle><Translate token={name} /></TabTitle>}
+      {name && (
+        <TabTitle>
+          <Translate token={name} />
+        </TabTitle>
+      )}
     </Tab>
   );
 }

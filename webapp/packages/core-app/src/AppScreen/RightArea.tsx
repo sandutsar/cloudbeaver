@@ -1,78 +1,64 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
 
 import {
+  Loader,
   Pane,
+  Placeholder,
   ResizerControls,
+  s,
   SlideBox,
   SlideElement,
-  slideBoxStyles,
-  Split,
-  splitHorizontalStyles,
-  splitStyles,
   SlideOverlay,
-  ErrorBoundary,
-  useSplitUserState
+  Split,
+  useS,
+  useSplitUserState,
 } from '@cloudbeaver/core-blocks';
 import { useService } from '@cloudbeaver/core-di';
-import { useStyles } from '@cloudbeaver/core-theming';
 import { OptionsPanelService } from '@cloudbeaver/core-ui';
 
-import { NavigationTabsBar } from '../shared/NavigationTabs/NavigationTabsBar';
-import { ToolsPanel } from '../shared/ToolsPanel/ToolsPanel';
-import { ToolsPanelService } from '../shared/ToolsPanel/ToolsPanelService';
+import { AppScreenService } from './AppScreenService';
+import style from './RightArea.m.css';
 
-const styles = css`
-    Pane {
-      composes: theme-background-surface theme-text-on-surface from global;
-      display: flex;
-      overflow: auto;
-    }
-    SlideBox {
-      flex: 1;
-    }
-  `;
+interface Props {
+  className?: string;
+}
 
-export const RightArea = observer(function RightArea() {
-  const toolsPanelService = useService(ToolsPanelService);
+export const RightArea = observer<Props>(function RightArea({ className }) {
+  const styles = useS(style);
+  const appScreenService = useService(AppScreenService);
   const optionsPanelService = useService(OptionsPanelService);
   const splitState = useSplitUserState('right-area');
 
   const OptionsPanel = optionsPanelService.getPanelComponent();
-  const activeTools = toolsPanelService.tabsContainer.getDisplayed();
 
-  return styled(useStyles(styles, splitStyles, splitHorizontalStyles, slideBoxStyles))(
-    <SlideBox open={optionsPanelService.active}>
+  const toolsDisabled = appScreenService.rightAreaBottom.getDisplayed({}).length === 0;
+
+  return (
+    <SlideBox open={optionsPanelService.active} className={s(styles, { slideBox: true }, className)}>
       <SlideElement>
-        <ErrorBoundary remount><OptionsPanel /></ErrorBoundary>
+        <Loader className={s(styles, { loader: true })} suspense>
+          <OptionsPanel />
+        </Loader>
       </SlideElement>
       <SlideElement>
-        <Split
-          {...splitState}
-          sticky={30}
-          split="horizontal"
-          mode={activeTools.length ? splitState.mode : 'minimize'}
-          disable={activeTools.length === 0}
-          keepRatio
-        >
-          <Pane>
-            <ErrorBoundary remount>
-              <NavigationTabsBar />
-            </ErrorBoundary>
+        <Split {...splitState} sticky={30} split="horizontal" mode={toolsDisabled ? 'minimize' : splitState.mode} disable={toolsDisabled} keepRatio>
+          <Pane className={s(styles, { pane: true })}>
+            <Loader className={s(styles, { loader: true })} suspense>
+              <Placeholder container={appScreenService.rightAreaTop} />
+            </Loader>
           </Pane>
           <ResizerControls />
-          <Pane basis='30%' main>
-            <ErrorBoundary remount>
-              <ToolsPanel container={toolsPanelService.tabsContainer} />
-            </ErrorBoundary>
+          <Pane className={s(styles, { pane: true })} basis="30%" main>
+            <Loader className={s(styles, { loader: true })} suspense>
+              <Placeholder container={appScreenService.rightAreaBottom} />
+            </Loader>
           </Pane>
         </Split>
         <SlideOverlay onClick={() => optionsPanelService.close()} />

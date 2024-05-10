@@ -1,0 +1,8 @@
+{
+  "query": "mutation deleteConnection($projectId:ID!, $id: ID!) {deleteConnection(projectId:$projectId, id: $id)}",
+  "variables": {
+    "projectId": "u_test",
+    "id": "${connectionId}"
+  },
+  "operationName": "deleteConnection"
+}

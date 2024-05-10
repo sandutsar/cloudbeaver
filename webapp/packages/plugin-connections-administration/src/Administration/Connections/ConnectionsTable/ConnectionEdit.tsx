@@ -1,65 +1,48 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import { useRef, useEffect } from 'react';
-import styled, { css } from 'reshadow';
+import { useMemo } from 'react';
 
+import { Loader, s, useS } from '@cloudbeaver/core-blocks';
+import { ConnectionInfoResource, IConnectionInfoParams } from '@cloudbeaver/core-connections';
 import { useService } from '@cloudbeaver/core-di';
-import { useStyles } from '@cloudbeaver/core-theming';
-import { ConnectionForm, useConnectionFormState } from '@cloudbeaver/plugin-connections';
+import { ConnectionFormLoader, useConnectionFormState } from '@cloudbeaver/plugin-connections';
 
-import { ConnectionsResource } from '../../ConnectionsResource';
-
-const styles = css`
-    box {
-      composes: theme-background-secondary theme-text-on-secondary from global;
-      box-sizing: border-box;
-      padding-bottom: 24px;
-      display: flex;
-      flex-direction: column;
-      height: 664px;
-    }
-  `;
+import styles from './ConnectionEdit.m.css';
 
 interface Props {
-  item: string;
+  item: IConnectionInfoParams;
 }
 
-export const ConnectionEdit = observer<Props>(function ConnectionEditNew({
-  item,
-}) {
-  const connectionsResource = useService(ConnectionsResource);
-  const boxRef = useRef<HTMLDivElement>(null);
+export const ConnectionEdit = observer<Props>(function ConnectionEditNew({ item }) {
+  const connectionInfoResource = useService(ConnectionInfoResource);
   // const tableContext = useContext(TableContext);
   // const collapse = useCallback(() => tableContext?.setItemExpand(item, false), [tableContext, item]);
 
-  useEffect(() => {
-    boxRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'nearest',
-    });
-  }, []);
+  const data = useConnectionFormState(connectionInfoResource, state => state.setOptions('edit', 'admin'));
+  const style = useS(styles);
 
-  const data = useConnectionFormState(
-    connectionsResource,
-    state => state.setOptions('edit', 'admin')
-  );
+  const projectId = item.projectId;
+  const connectionId = item.connectionId;
 
-  data.config.connectionId = item;
+  useMemo(() => {
+    data.setConfig(projectId, { connectionId });
+  }, [data, projectId, connectionId]);
 
-  return styled(useStyles(styles))(
-    <box ref={boxRef} as='div'>
-      <ConnectionForm
-        state={data}
-        // onCancel={collapse}
-        // onSave={collapse}
-      />
-    </box>
+  return (
+    <div className={s(style, { box: true })}>
+      <Loader className={s(style, { loader: true })} suspense>
+        <ConnectionFormLoader
+          state={data}
+          // onCancel={collapse}
+          // onSave={collapse}
+        />
+      </Loader>
+    </div>
   );
 });

@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
  */
 package io.cloudbeaver.model;
 
+import org.jkiss.code.Nullable;
+import org.jkiss.dbeaver.model.connection.DBPDriverConfigurationType;
 import org.jkiss.dbeaver.model.data.json.JSONUtils;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.utils.CommonUtils;
@@ -42,8 +44,11 @@ public class WebConnectionConfig {
     private String databaseName;
     private String url;
 
+    private int keepAliveInterval;
+
     private String name;
     private String description;
+    private String folder;
     private Map<String, Object> properties;
     private String userName;
     private String userPassword;
@@ -51,8 +56,11 @@ public class WebConnectionConfig {
     private String authModelId;
     private Map<String, Object> credentials;
     private boolean saveCredentials;
+    private boolean sharedCredentials;
     private Map<String, Object> providerProperties;
     private List<WebNetworkHandlerConfigInput> networkHandlersConfig;
+    private DBPDriverConfigurationType configurationType;
+    private String selectedSecretId;
 
     public WebConnectionConfig() {
     }
@@ -76,18 +84,26 @@ public class WebConnectionConfig {
             databaseName = JSONUtils.getString(params, "databaseName");
             url = JSONUtils.getString(params, "url");
 
+            keepAliveInterval = JSONUtils.getInteger(params, "keepAliveInterval", -1);
+
             name = JSONUtils.getString(params, "name");
             description = JSONUtils.getString(params, "description");
+            folder = JSONUtils.getString(params, "folder");
 
             properties = JSONUtils.getObjectOrNull(params, "properties");
             userName = JSONUtils.getString(params, "userName");
             userPassword = JSONUtils.getString(params, "userPassword");
+            selectedSecretId = JSONUtils.getString(params, "selectedSecretId");
 
             authModelId = JSONUtils.getString(params, "authModelId");
             credentials = JSONUtils.getObjectOrNull(params, "credentials");
             saveCredentials = JSONUtils.getBoolean(params, "saveCredentials");
+            sharedCredentials = JSONUtils.getBoolean(params, "sharedCredentials");
 
             providerProperties = JSONUtils.getObjectOrNull(params, "providerProperties");
+
+            String configType = JSONUtils.getString(params, "configurationType");
+            configurationType = configType == null ? null : DBPDriverConfigurationType.valueOf(configType);
 
             networkHandlersConfig = new ArrayList<>();
             for (Map<String, Object> nhc : JSONUtils.getObjectList(params, "networkHandlersConfig")) {
@@ -129,6 +145,11 @@ public class WebConnectionConfig {
     @Property
     public String getDescription() {
         return description;
+    }
+
+    @Property
+    public String getFolder() {
+        return folder;
     }
 
     @Property
@@ -177,6 +198,11 @@ public class WebConnectionConfig {
     }
 
     @Property
+    public DBPDriverConfigurationType getConfigurationType() {
+        return configurationType;
+    }
+
+    @Property
     public Map<String, Object> getCredentials() {
         return credentials;
     }
@@ -190,6 +216,11 @@ public class WebConnectionConfig {
         return saveCredentials;
     }
 
+    @Property
+    public boolean isSharedCredentials() {
+        return sharedCredentials;
+    }
+
     public void setSaveCredentials(boolean saveCredentials) {
         this.saveCredentials = saveCredentials;
     }
@@ -197,5 +228,15 @@ public class WebConnectionConfig {
     @Property
     public Map<String, Object> getProviderProperties() {
         return providerProperties;
+    }
+
+    @Property
+    public Integer getKeepAliveInterval() {
+        return keepAliveInterval;
+    }
+
+    @Nullable
+    public String getSelectedSecretId() {
+        return selectedSecretId;
     }
 }

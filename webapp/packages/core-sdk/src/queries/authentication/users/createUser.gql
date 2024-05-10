@@ -1,5 +1,15 @@
-query createUser($userId: ID!, $includeMetaParameters: Boolean!, $customIncludeOriginDetails: Boolean!) {
-  user: createUser(userId: $userId) {
+query createUser(
+  $userId: ID!
+  $enabled: Boolean!
+  $authRole: String
+  $includeMetaParameters: Boolean!
+  $customIncludeOriginDetails: Boolean!
+  ) {
+  user: createUser(
+    userId: $userId
+    enabled: $enabled
+    authRole: $authRole
+  ) {
     ...AdminUserInfo
-  } 
+  }
 }

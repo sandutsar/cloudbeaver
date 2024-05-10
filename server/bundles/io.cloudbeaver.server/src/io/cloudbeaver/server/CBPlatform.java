@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,21 @@
 
 package io.cloudbeaver.server;
 
-import io.cloudbeaver.registry.WebDriverRegistry;
+import io.cloudbeaver.auth.NoAuthCredentialsProvider;
+import io.cloudbeaver.server.jobs.SessionStateJob;
+import io.cloudbeaver.server.jobs.WebDataSourceMonitorJob;
+import io.cloudbeaver.server.jobs.WebSessionMonitorJob;
 import io.cloudbeaver.service.session.WebSessionManager;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Plugin;
+import org.eclipse.core.runtime.Status;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
-import org.jkiss.dbeaver.model.DBPExternalFileManager;
+import org.jkiss.dbeaver.model.DBFileController;
 import org.jkiss.dbeaver.model.app.DBACertificateStorage;
-import org.jkiss.dbeaver.model.app.DBASecureStorage;
-import org.jkiss.dbeaver.model.app.DBPResourceHandler;
 import org.jkiss.dbeaver.model.app.DBPWorkspace;
 import org.jkiss.dbeaver.model.connection.DBPDataSourceProviderDescriptor;
 import org.jkiss.dbeaver.model.connection.DBPDataSourceProviderRegistry;
@@ -36,25 +39,24 @@ import org.jkiss.dbeaver.model.connection.DBPDriver;
 import org.jkiss.dbeaver.model.connection.DBPDriverLibrary;
 import org.jkiss.dbeaver.model.impl.app.DefaultCertificateStorage;
 import org.jkiss.dbeaver.model.preferences.DBPPreferenceStore;
-import org.jkiss.dbeaver.model.qm.QMController;
+import org.jkiss.dbeaver.model.qm.QMRegistry;
 import org.jkiss.dbeaver.model.qm.QMUtils;
+import org.jkiss.dbeaver.model.runtime.AbstractJob;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.runtime.VoidProgressMonitor;
 import org.jkiss.dbeaver.registry.BasePlatformImpl;
 import org.jkiss.dbeaver.registry.DataSourceProviderRegistry;
+import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.runtime.SecurityProviderUtils;
-import org.jkiss.dbeaver.runtime.qm.QMControllerImpl;
 import org.jkiss.dbeaver.runtime.qm.QMLogFileWriter;
+import org.jkiss.dbeaver.runtime.qm.QMRegistryImpl;
 import org.jkiss.dbeaver.utils.ContentUtils;
-import org.jkiss.dbeaver.utils.GeneralUtils;
-import org.osgi.framework.Bundle;
+import org.jkiss.utils.IOUtils;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -66,62 +68,28 @@ public class CBPlatform extends BasePlatformImpl {
     public static final String PLUGIN_ID = "io.cloudbeaver.server"; //$NON-NLS-1$
 
     private static final Log log = Log.getLog(CBPlatform.class);
+    public static final String TEMP_FILE_FOLDER = "temp-sql-upload-files";
+    public static final String TEMP_FILE_IMPORT_FOLDER = "temp-import-files";
 
     public static final String WORK_DATA_FOLDER_NAME = ".work-data";
 
-    static CBPlatform instance;
-
     @Nullable
-    private static CBApplication application = null;
+    private static CBApplication<?> application = null;
 
     private Path tempFolder;
 
-    private QMControllerImpl queryManager;
+    private QMRegistryImpl queryManager;
     private QMLogFileWriter qmLogWriter;
     private DBACertificateStorage certificateStorage;
-    private WebWorkspace workspace;
-
-    private WebSessionManager sessionManager;
+    private WebGlobalWorkspace workspace;
+    private CBPreferenceStore preferenceStore;
     private final List<DBPDriver> applicableDrivers = new ArrayList<>();
 
     public static CBPlatform getInstance() {
-        if (instance == null) {
-            synchronized (CBPlatform.class) {
-                if (instance == null) {
-                    // Initialize CB platform
-                    CBPlatform.createInstance();
-                }
-            }
-        }
-        return instance;
+        return (CBPlatform) DBWorkbench.getPlatform();
     }
 
-    private static CBPlatform createInstance() {
-        log.debug("Initializing product: " + GeneralUtils.getProductTitle());
-        if (Platform.getProduct() != null) {
-            Bundle definingBundle = Platform.getProduct().getDefiningBundle();
-            if (definingBundle != null) {
-                log.debug("Host plugin: " + definingBundle.getSymbolicName() + " " + definingBundle.getVersion());
-            } else {
-                log.debug("!!! No product bundle found");
-            }
-        }
-
-        try {
-            instance = new CBPlatform();
-            instance.initialize();
-            return instance;
-        } catch (Throwable e) {
-            log.error("Error initializing CBPlatform", e);
-            throw new IllegalStateException("Error initializing CBPlatform", e);
-        }
-    }
-
-    public static DBPPreferenceStore getGlobalPreferenceStore() {
-        return WebPlatformActivator.getInstance().getPreferences();
-    }
-
-    private CBPlatform() {
+    CBPlatform() {
     }
 
     public static void setApplication(CBApplication application) {
@@ -129,34 +97,50 @@ public class CBPlatform extends BasePlatformImpl {
     }
 
     @Override
-    protected void initialize() {
+    protected synchronized void initialize() {
         long startTime = System.currentTimeMillis();
-        log.info("Initialize web platform...");
-
+        log.info("Initialize web platform...: ");
+        this.preferenceStore = new CBPreferenceStore(this, WebPlatformActivator.getInstance().getPreferences());
         // Register BC security provider
         SecurityProviderUtils.registerSecurityProvider();
 
         // Register properties adapter
-        this.workspace = new WebWorkspace(this, ResourcesPlugin.getWorkspace());
+        this.workspace = new WebGlobalWorkspace(this, ResourcesPlugin.getWorkspace());
         this.workspace.initializeProjects();
 
         QMUtils.initApplication(this);
-        this.queryManager = new QMControllerImpl();
+        this.queryManager = new QMRegistryImpl();
 
         this.qmLogWriter = new QMLogFileWriter();
         this.queryManager.registerMetaListener(qmLogWriter);
 
         this.certificateStorage = new DefaultCertificateStorage(
-            new File(WebPlatformActivator.getInstance().getStateLocation().toFile(), "security"));
-
+            WebPlatformActivator.getInstance().getStateLocation().toFile().toPath().resolve("security"));
         super.initialize();
 
         refreshApplicableDrivers();
 
-        sessionManager = WebSessionManager.getInstance();
+        new WebSessionMonitorJob(this)
+            .scheduleMonitor();
 
-        new WebSessionMonitorJob(this).scheduleMonitor();
+        new SessionStateJob(this)
+            .scheduleMonitor();
 
+        new WebDataSourceMonitorJob(this)
+            .scheduleMonitor();
+
+        new AbstractJob("Delete temp folder") {
+            @Override
+            protected IStatus run(DBRProgressMonitor monitor) {
+                try {
+                    IOUtils.deleteDirectory(getTempFolder(monitor, TEMP_FILE_FOLDER));
+                    IOUtils.deleteDirectory(getTempFolder(monitor, TEMP_FILE_IMPORT_FOLDER));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                return Status.OK_STATUS;
+            }
+        }.schedule();
         log.info("Web platform initialized (" + (System.currentTimeMillis() - startTime) + "ms)");
     }
 
@@ -175,7 +159,7 @@ public class CBPlatform extends BasePlatformImpl {
             this.queryManager.dispose();
             //queryManager = null;
         }
-        DataSourceProviderRegistry.getInstance().dispose();
+        DataSourceProviderRegistry.dispose();
 
         if (workspace != null) {
             try {
@@ -195,7 +179,6 @@ public class CBPlatform extends BasePlatformImpl {
         }
 
         CBPlatform.application = null;
-        CBPlatform.instance = null;
         System.gc();
         log.debug("Shutdown completed in " + (System.currentTimeMillis() - startTime) + "ms");
     }
@@ -208,13 +191,7 @@ public class CBPlatform extends BasePlatformImpl {
 
     @NotNull
     @Override
-    public DBPResourceHandler getDefaultResourceHandler() {
-        return CBResourceHandler.INSTANCE;
-    }
-
-    @NotNull
-    @Override
-    public CBApplication getApplication() {
+    public CBApplication<?> getApplication() {
         return application;
     }
 
@@ -229,14 +206,14 @@ public class CBPlatform extends BasePlatformImpl {
     }
 
     @NotNull
-    public QMController getQueryManager() {
+    public QMRegistry getQueryManager() {
         return queryManager;
     }
 
     @NotNull
     @Override
     public DBPPreferenceStore getPreferenceStore() {
-        return WebPlatformActivator.getInstance().getPreferences();
+        return preferenceStore;
     }
 
     @NotNull
@@ -246,19 +223,7 @@ public class CBPlatform extends BasePlatformImpl {
     }
 
     @NotNull
-    @Override
-    public DBASecureStorage getSecureStorage() {
-        return application.getSecureStorage();
-    }
-
-    @NotNull
-    @Override
-    public DBPExternalFileManager getExternalFileManager() {
-        return workspace;
-    }
-
-    @NotNull
-    public File getTempFolder(DBRProgressMonitor monitor, String name) {
+    public Path getTempFolder(@NotNull DBRProgressMonitor monitor, @NotNull String name) {
         if (tempFolder == null) {
             // Make temp folder
             monitor.subTask("Create temp folder");
@@ -279,13 +244,12 @@ public class CBPlatform extends BasePlatformImpl {
                 log.error("Error creating temp folder '" + folder.toAbsolutePath() + "'", e);
             }
         }
-        return folder.toFile();
+        return folder;
     }
 
-    @NotNull
     @Override
-    public File getConfigurationFile(String fileName) {
-        return WebPlatformActivator.getConfigurationFile(fileName);
+    protected Plugin getProductPlugin() {
+        return WebPlatformActivator.getInstance();
     }
 
     @Override
@@ -294,7 +258,7 @@ public class CBPlatform extends BasePlatformImpl {
     }
 
     public WebSessionManager getSessionManager() {
-        return sessionManager;
+        return application.getSessionManager();
     }
 
     public void refreshApplicableDrivers() {
@@ -304,19 +268,23 @@ public class CBPlatform extends BasePlatformImpl {
             for (DBPDriver driver : dspd.getEnabledDrivers()) {
                 List<? extends DBPDriverLibrary> libraries = driver.getDriverLibraries();
                 {
-                    if (!WebDriverRegistry.getInstance().isDriverEnabled(driver)) {
+                    if (!application.getDriverRegistry().isDriverEnabled(driver)) {
                         continue;
                     }
-                    boolean hasAllFiles = true;
+                    boolean hasAllFiles = true, hasJars = false;
                     for (DBPDriverLibrary lib : libraries) {
-                        if (!lib.isOptional() && lib.getType() != DBPDriverLibrary.FileType.license &&
-                            (lib.getLocalFile() == null || !lib.getLocalFile().exists())) {
+                        if (!DBWorkbench.isDistributed() && !lib.isOptional() && lib.getType() != DBPDriverLibrary.FileType.license &&
+                            (lib.getLocalFile() == null || !Files.exists(lib.getLocalFile())))
+                        {
                             hasAllFiles = false;
                             log.error("\tDriver '" + driver.getId() + "' is missing library '" + lib.getDisplayName() + "'");
-                            break;
+                        } else {
+                            if (lib.getType() == DBPDriverLibrary.FileType.jar) {
+                                hasJars = true;
+                            }
                         }
                     }
-                    if (hasAllFiles) {
+                    if (hasAllFiles || hasJars) {
                         applicableDrivers.add(driver);
                     }
                 }
@@ -325,4 +293,9 @@ public class CBPlatform extends BasePlatformImpl {
         log.info("Available drivers: " + applicableDrivers.stream().map(DBPDriver::getFullName).collect(Collectors.joining(",")));
     }
 
+    @NotNull
+    @Override
+    public DBFileController createFileController() {
+        return getApplication().createFileController(new NoAuthCredentialsProvider());
+    }
 }

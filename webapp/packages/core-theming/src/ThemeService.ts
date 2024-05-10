@@ -1,33 +1,28 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { computed, IReactionDisposer, makeObservable, observable, reaction } from 'mobx';
 
-import { action, computed, observable, makeObservable } from 'mobx';
-
-import './styles/main/normalize.pure.css';
-import './styles/main/base.pure.css';
-import './styles/main/fonts.pure.css';
-import './styles/main/app-loading-screen.pure.css';
-import './styles/main/elevation.pure.scss';
-import './styles/main/typography.pure.scss';
-import './styles/main/color.pure.scss';
-import { UserInfoResource } from '@cloudbeaver/core-authentication';
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
-import { DbeaverError, NotificationService } from '@cloudbeaver/core-events';
+import { NotificationService, UIError } from '@cloudbeaver/core-events';
 import { ISyncExecutor, SyncExecutor } from '@cloudbeaver/core-executor';
-import { SettingsService } from '@cloudbeaver/core-settings';
 
-import { themes } from './themes';
-import { defaultThemeSettings, ThemeSettingsService } from './ThemeSettingsService';
+import type { Style } from './ComponentStyle';
+import './styles/main/base.pure.css';
+import './styles/main/color.pure.scss';
+import './styles/main/elevation.pure.scss';
+import './styles/main/fonts.pure.css';
+import './styles/main/normalize.pure.css';
+import './styles/main/typography.pure.scss';
+import { DEFAULT_THEME_ID, themes } from './themes';
+import { ThemeSettingsService } from './ThemeSettingsService';
 import type { ClassCollection } from './themeUtils';
 
-const THEME_KEY = 'appTheme';
 const COMMON_STYLES: any[] = [];
-const THEME_SETTINGS_KEY = 'themeSettings';
 
 export interface ITheme {
   name: string;
@@ -36,8 +31,9 @@ export interface ITheme {
   loader: () => Promise<ClassCollection>;
 }
 
-interface ISettings {
-  currentThemeId: string;
+export interface IStyleRegistry {
+  mode: 'replace' | 'append';
+  styles: Style[];
 }
 
 @injectable()
@@ -46,66 +42,93 @@ export class ThemeService extends Bootstrap {
     return Array.from(this.themeMap.values());
   }
 
-  get defaultThemeId(): string {
-    return this.themeSettingsService.settings.getValue('defaultTheme');
-  }
-
-  get currentThemeId(): string {
-    return this.settings.currentThemeId;
+  get themeId(): string {
+    return this.themeSettingsService.theme;
   }
 
   get currentTheme(): ITheme {
-    let theme = this.themeMap.get(this.currentThemeId);
+    let theme = this.themeMap.get(this.themeId);
 
     if (!theme) {
-      theme = this.themeMap.get(defaultThemeSettings.defaultTheme)!;
+      theme = this.themeMap.get(DEFAULT_THEME_ID)!;
     }
 
     return theme;
   }
 
-  readonly onThemeChange: ISyncExecutor<ITheme>;
+  readonly onChange: ISyncExecutor<ITheme>;
 
+  private readonly stylesRegistry: Map<Style, IStyleRegistry[]> = new Map();
   private readonly themeMap: Map<string, ITheme> = new Map();
-  private readonly settings: ISettings = {
-    currentThemeId: defaultThemeSettings.defaultTheme,
-  };
+  private reactionDisposer: IReactionDisposer | null;
 
   constructor(
     private readonly notificationService: NotificationService,
-    private readonly settingsService: SettingsService,
     private readonly themeSettingsService: ThemeSettingsService,
-    private readonly userInfoResource: UserInfoResource
   ) {
     super();
 
-    this.onThemeChange = new SyncExecutor();
-    this.userInfoResource.onDataUpdate.addHandler(() => {
-      const theme = this.userInfoResource.getConfigurationParameter(THEME_KEY);
-      if (theme && theme !== this.currentThemeId) {
-        this.tryChangeTheme(theme);
-      }
-    });
+    this.reactionDisposer = null;
+    this.onChange = new SyncExecutor();
 
-    makeObservable<ThemeService, 'themeMap' | 'settings' | 'setCurrentThemeId'>(this, {
+    makeObservable<ThemeService, 'themeMap'>(this, {
       themes: computed,
       currentTheme: computed,
-      defaultThemeId: computed,
+      themeId: computed,
       themeMap: observable.shallow,
-      settings: observable,
-      setCurrentThemeId: action,
     });
   }
 
   register(): void {
     this.loadAllThemes();
+    this.reactionDisposer = reaction(
+      () => this.currentTheme,
+      theme => this.loadTheme(theme.id),
+      {
+        fireImmediately: true,
+      },
+    );
+  }
+
+  dispose(): void {
+    if (this.reactionDisposer) {
+      this.reactionDisposer();
+    }
+  }
+
+  addStyleRegistry<T extends Record<string, string>>(style: Style<T>, mode: 'replace' | 'append', styles: Style<T>[]): void {
+    if (!this.stylesRegistry.has(style)) {
+      this.stylesRegistry.set(style, []);
+    }
+
+    this.stylesRegistry.get(style)!.push({ mode, styles });
+  }
+
+  mapStyles<T extends Record<string, string>>(styles: Style<T>[], context?: Map<Style, IStyleRegistry[]>): Style<T>[] {
+    return styles
+      .map(style => {
+        const registries = this.stylesRegistry.get(style) ?? context?.get(style);
+
+        if (!registries) {
+          return [style];
+        }
+
+        return registries.reduce(
+          (acc, registry) => {
+            if (registry.mode === 'replace') {
+              acc = acc.filter(s => s !== style);
+            }
+
+            return [...acc, ...this.mapStyles(registry.styles, context)] as Style<T>[];
+          },
+          [style] as Style<T>[],
+        );
+      })
+      .flat();
   }
 
   async load(): Promise<void> {
-    this.setCurrentThemeId(this.defaultThemeId);
-    this.settingsService.registerSettings(this.settings, THEME_SETTINGS_KEY);
-    await this.userInfoResource.load(undefined, ['includeConfigurationParameters']);
-    await this.tryChangeTheme(this.userInfoResource.getConfigurationParameter(THEME_KEY) || this.currentThemeId);
+    await this.loadTheme(this.themeId);
   }
 
   getThemeStyles(themeId: string): ClassCollection[] {
@@ -119,28 +142,30 @@ export class ThemeService extends Bootstrap {
   }
 
   async changeTheme(themeId: string): Promise<void> {
-    await this.tryChangeTheme(themeId);
-    if (this.userInfoResource.parametersAvailable) {
-      await this.userInfoResource.setConfigurationParameter(THEME_KEY, themeId);
+    if (themeId === this.themeId) {
+      return;
     }
+    await this.setTheme(themeId);
+    this.onChange.execute(this.currentTheme);
   }
 
-  private async tryChangeTheme(themeId: string): Promise<void> {
+  private async setTheme(themeId: string): Promise<void> {
+    themeId = await this.loadTheme(themeId);
+
+    this.themeSettingsService.settings.setValue('core.theming.theme', themeId);
+    await this.themeSettingsService.settings.save();
+  }
+
+  private async loadTheme(themeId: string): Promise<string> {
     try {
       await this.loadThemeStylesAsync(themeId);
+      return themeId;
     } catch (e: any) {
-      if (themeId !== defaultThemeSettings.defaultTheme) {
-        return this.tryChangeTheme(defaultThemeSettings.defaultTheme); // try to fallback to default theme
+      if (themeId !== DEFAULT_THEME_ID) {
+        return this.loadTheme(DEFAULT_THEME_ID); // try to fallback to default theme
       }
       throw e;
     }
-
-    this.setCurrentThemeId(themeId);
-  }
-
-  private setCurrentThemeId(themeId: string) {
-    this.settings.currentThemeId = themeId;
-    this.onThemeChange.execute(this.currentTheme);
   }
 
   private loadAllThemes(): void {
@@ -152,7 +177,7 @@ export class ThemeService extends Bootstrap {
   private async loadThemeStylesAsync(id: string): Promise<void> {
     const theme = this.themeMap.get(id);
     if (!theme) {
-      throw new DbeaverError({ message: `Theme ${id} not found.` });
+      throw new UIError(`Theme ${id} not found.`);
     }
 
     if (!theme.styles) {

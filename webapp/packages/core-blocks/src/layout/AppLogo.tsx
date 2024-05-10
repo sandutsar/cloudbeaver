@@ -1,31 +1,14 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import styled, { css } from 'reshadow';
-
 import { IconOrImage } from '../IconOrImage';
-
-const styles = css`
-  logo {
-    height: 100%;
-    display: flex;
-    align-items: center;
-    margin-right: 16px;
-    width: 250px;
-    cursor: pointer;
-  }
-
-  IconOrImage {
-    height: 34px;
-    width: 154px;
-    margin-bottom: 2px;
-  }
-`;
+import { s } from '../s';
+import { useS } from '../useS';
+import styles from './AppLogo.m.css';
 
 interface Props {
   title: string;
@@ -33,9 +16,10 @@ interface Props {
 }
 
 export const AppLogo: React.FC<Props> = function AppLogo({ title, onClick }) {
-  return styled(styles)(
-    <logo as="div" title={title} onClick={onClick}>
-      <IconOrImage icon="/icons/logo.svg" />
-    </logo>
+  const style = useS(styles);
+  return (
+    <div tabIndex={0} className={s(style, { container: true })} onClick={onClick}>
+      <IconOrImage title={title} className={s(style, { logo: true })} icon="/icons/logo_sm.svg" />
+    </div>
   );
 };

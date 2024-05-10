@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ import io.cloudbeaver.registry.WebServiceDescriptor;
 import io.cloudbeaver.registry.WebServiceRegistry;
 import io.cloudbeaver.server.CBApplication;
 import io.cloudbeaver.server.CBPlatform;
+import io.cloudbeaver.service.security.PasswordPolicyConfiguration;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.navigator.DBNBrowseSettings;
 import org.jkiss.dbeaver.registry.language.PlatformLanguageDescriptor;
 import org.jkiss.dbeaver.registry.language.PlatformLanguageRegistry;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.dbeaver.utils.GeneralUtils;
-import org.jkiss.utils.ArrayUtils;
 import org.jkiss.utils.CommonUtils;
 
 import java.util.ArrayList;
@@ -46,7 +46,7 @@ public class WebServerConfig {
 
     @Property
     public String getName() {
-        return CommonUtils.notEmpty(application.getServerName());
+        return CommonUtils.notEmpty(application.getServerConfiguration().getServerName());
     }
 
     @Property
@@ -61,28 +61,28 @@ public class WebServerConfig {
 
     @Property
     public String getServerURL() {
-        return CommonUtils.notEmpty(application.getServerURL());
+        return CommonUtils.notEmpty(application.getServerConfiguration().getServerURL());
     }
 
     @Property
     public String getRootURI() {
-        return CommonUtils.notEmpty(application.getRootURI());
+        return CommonUtils.notEmpty(application.getServerConfiguration().getRootURI());
+    }
+
+    @Deprecated
+    @Property
+    public String getHostName() {
+        return getContainerId();
     }
 
     @Property
-    public String getHostName() {
-        return CommonUtils.notEmpty(System.getenv("HOSTNAME"));
+    public String getContainerId() {
+        return CommonUtils.notEmpty(application.getContainerId());
     }
 
     @Property
     public boolean isAnonymousAccessEnabled() {
         return application.getAppConfiguration().isAnonymousAccessEnabled();
-    }
-
-    @Property
-    public boolean isAuthenticationEnabled() {
-        String[] enabledAuthProviders = getEnabledAuthProviders();
-        return enabledAuthProviders == null || !ArrayUtils.isEmpty(enabledAuthProviders);
     }
 
     @Property
@@ -127,7 +127,7 @@ public class WebServerConfig {
 
     @Property
     public boolean isDevelopmentMode() {
-        return application.isDevelMode();
+        return application.getServerConfiguration().isDevelMode();
     }
 
     @Property
@@ -136,8 +136,13 @@ public class WebServerConfig {
     }
 
     @Property
+    public boolean isResourceManagerEnabled() {
+        return application.getAppConfiguration().isResourceManagerEnabled();
+    }
+
+    @Property
     public long getSessionExpireTime() {
-        return application.getMaxSessionIdleTime();
+        return application.getServerConfiguration().getMaxSessionIdleTime();
     }
 
     @Property
@@ -199,4 +204,23 @@ public class WebServerConfig {
         return application.getAppConfiguration().getDisabledDrivers();
     }
 
+    @Property
+    public Boolean isDistributed() {
+        return application.isDistributed();
+    }
+
+    @Property
+    public String getDefaultAuthRole() {
+        return application.getDefaultAuthRole();
+    }
+
+    @Property
+    public String getDefaultUserTeam() {
+        return application.getAppConfiguration().getDefaultUserTeam();
+    }
+
+    @Property
+    public PasswordPolicyConfiguration getPasswordPolicyConfiguration() {
+        return application.getSecurityManagerConfiguration().getPasswordPolicyConfiguration();
+    }
 }

@@ -1,16 +1,16 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { createContext } from 'react';
 import type { TabStateReturn } from 'reakit/Tab';
 
+import type { IDataContext } from '@cloudbeaver/core-data-context';
 import type { IExecutor } from '@cloudbeaver/core-executor';
-import type { MetadataMap, MetadataValueGetter } from '@cloudbeaver/core-utils';
+import type { MetadataMap, MetadataValueGetter, schema } from '@cloudbeaver/core-utils';
 
 import type { ITabData, ITabInfo, ITabsContainer } from './TabsContainer/ITabsContainer';
 
@@ -27,9 +27,11 @@ export interface ITabsContext<T = Record<string, any>> {
   closable: boolean;
   tabList?: string[];
   enabledBaseActions?: boolean;
+  context: IDataContext;
+  canClose: (tabId: string) => boolean;
   getTabInfo: (tabId: string) => ITabInfo<T> | undefined;
-  getTabState: <T>(tabId: string, valueGetter?: MetadataValueGetter<string, T>) => T;
-  getLocalState: <T>(tabId: string, valueGetter?: MetadataValueGetter<string, T>) => T;
+  getTabState: <T>(tabId: string, valueGetter?: MetadataValueGetter<string, T>, schema?: schema.AnyZodObject) => T;
+  getLocalState: <T>(tabId: string, valueGetter?: MetadataValueGetter<string, T>, schema?: schema.AnyZodObject) => T;
   open: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   closeAll: () => Promise<void>;
@@ -37,6 +39,4 @@ export interface ITabsContext<T = Record<string, any>> {
   closeOthers: (tabId: string) => Promise<void>;
 }
 
-export const TabsContext = createContext<ITabsContext<any> | undefined>(
-  undefined
-);
+export const TabsContext = createContext<ITabsContext<any> | undefined>(undefined);

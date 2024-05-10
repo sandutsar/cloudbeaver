@@ -1,44 +1,43 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import { filterLayoutFakeProps, getLayoutProps } from '../Containers/filterLayoutFakeProps';
+import type { ILayoutSizeProps } from '../Containers/ILayoutSizeProps';
+import { s } from '../s';
+import { useS } from '../useS';
+import { Field } from './Field';
+import { FieldDescription } from './FieldDescription';
+import { FieldLabel } from './FieldLabel';
+import style from './FormFieldDescription.m.css';
 
-import styled, { css } from 'reshadow';
-
-import { useStyles } from '@cloudbeaver/core-theming';
-
-import { baseFormControlStyles, baseValidFormControlStyles } from './baseFormControlStyles';
-
-const style = css`
-  field-label {
-    composes: theme-typography--body1 from global;
-    font-weight: 500;
-  }
-`;
-
-interface Props {
+interface Props extends ILayoutSizeProps {
   label?: string;
   title?: string;
+  content?: React.ReactNode;
   className?: string;
 }
 
-export const FormFieldDescription: React.FC<Props> = function FormFieldDescription({
+export const FormFieldDescription: React.FC<React.PropsWithChildren<Props>> = function FormFieldDescription({
   label,
   title,
+  content,
   children,
   className,
+  ...rest
 }) {
-  const styles = useStyles(baseFormControlStyles, baseValidFormControlStyles, style);
+  const layoutProps = getLayoutProps(rest);
+  rest = filterLayoutFakeProps(rest);
+  const styles = useS(style);
 
-  return styled(styles)(
-    <field title={title} className={className}>
-      {label && <field-label as='label'>{label}</field-label>}
-      <field-description>
-        {children}
-      </field-description>
-    </field>
+  return (
+    <Field title={title} className={className} {...rest} {...layoutProps}>
+      {label && <FieldLabel className={s(styles, { fieldLabel: true })}>{label}</FieldLabel>}
+      {content}
+      <FieldDescription className={s(styles, { fieldDescription: true })}>{children}</FieldDescription>
+    </Field>
   );
 };

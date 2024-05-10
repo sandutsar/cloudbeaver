@@ -1,7 +1,11 @@
+export * from './TaskScheduler/AutoRunningTask';
 export * from './TaskScheduler/ITask';
+export * from './TaskScheduler/Task';
 export * from './TaskScheduler/TaskScheduler';
 export * from './ExecutionContext';
+export * from './executionExceptionContext';
 export * from './Executor';
+export * from './executorHandlerFilter';
 export * from './ExecutorHandlersCollection';
 export * from './ExecutorInterrupter';
 export * from './IExecutionContext';
@@ -10,3 +14,4 @@ export * from './IExecutorHandler';
 export * from './IExecutorHandlersCollection';
 export * from './ISyncExecutor';
 export * from './SyncExecutor';
+export * from './whileTask';

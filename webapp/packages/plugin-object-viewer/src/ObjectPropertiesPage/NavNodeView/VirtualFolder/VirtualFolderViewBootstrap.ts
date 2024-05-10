@@ -1,23 +1,25 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { NavNodeInfoResource, NavNodeViewService } from '@cloudbeaver/core-app';
+import { importLazyComponent } from '@cloudbeaver/core-blocks';
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
+import { NavNodeInfoResource } from '@cloudbeaver/core-navigation-tree';
+import { NavNodeViewService } from '@cloudbeaver/plugin-navigation-tree';
 
-import { VirtualFolderPanel } from './VirtualFolderPanel';
-import { VirtualFolderTab } from './VirtualFolderTab';
 import { VirtualFolderUtils } from './VirtualFolderUtils';
+
+const VirtualFolderTab = importLazyComponent(() => import('./VirtualFolderTab').then(m => m.VirtualFolderTab));
+const VirtualFolderPanel = importLazyComponent(() => import('./VirtualFolderPanel').then(m => m.VirtualFolderPanel));
 
 @injectable()
 export class VirtualFolderViewBootstrap extends Bootstrap {
   constructor(
     private readonly navNodeViewService: NavNodeViewService,
-    private readonly navNodeInfoResource: NavNodeInfoResource
+    private readonly navNodeInfoResource: NavNodeInfoResource,
   ) {
     super();
   }
@@ -48,9 +50,9 @@ export class VirtualFolderViewBootstrap extends Bootstrap {
         for (const child of children) {
           const node = this.navNodeInfoResource.get(child);
 
-          if (!node || node?.folder) {
+          if (!node || node.folder) {
             nextChildren.push(child);
-          } else if (node?.nodeType) {
+          } else if (node.nodeType) {
             const virtualId = VirtualFolderUtils.getFolderId(node.nodeType);
 
             if (!virtualFolders.includes(virtualId)) {
@@ -66,5 +68,5 @@ export class VirtualFolderViewBootstrap extends Bootstrap {
     });
   }
 
-  load(): void { }
+  load(): void {}
 }

@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,6 +55,11 @@ public class WebUserInfo {
     }
 
     @Property
+    public String getAuthRole() {
+        return user == null ? null : user.getAuthRole();
+    }
+
+    @Property
     public List<WebUserAuthToken> getAuthTokens() {
         return session.getAllAuthInfo().stream()
             .map(ai -> new WebUserAuthToken(session, user, ai))
@@ -65,7 +70,7 @@ public class WebUserInfo {
     public List<String> getLinkedAuthProviders() throws DBWebException {
         if (linkedProviders == null) {
             try {
-                linkedProviders = session.getSecurityController().getUserLinkedProviders(session.getUser().getUserId());
+                linkedProviders = session.getSecurityController().getCurrentUserLinkedProviders();
             } catch (DBException e) {
                 throw new DBWebException("Error reading user linked providers", e);
             }
@@ -75,16 +80,12 @@ public class WebUserInfo {
 
     @Property
     public Map<String, String> getMetaParameters() {
-        return user.getMetaParameters();
+        return session.getUserMetaParameters();
     }
 
     @Property
     public Map<String, Object> getConfigurationParameters() throws DBWebException {
-        try {
-            return session.getSecurityController().getUserParameters(user.getUserId());
-        } catch (DBException e) {
-            throw new DBWebException("Error reading user parameters", e);
-        }
+        return session.getUserContext().getPreferenceStore().getCustomUserParameters();
     }
 
 }

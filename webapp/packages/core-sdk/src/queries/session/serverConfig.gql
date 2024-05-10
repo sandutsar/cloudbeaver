@@ -5,7 +5,9 @@ query serverConfig {
     workspaceId
     serverURL
     rootURI
-    hostName
+    containerId
+    defaultAuthRole
+    defaultUserTeam
     productConfiguration
     supportsCustomConnections
     supportsConnectionBrowser
@@ -17,12 +19,15 @@ query serverConfig {
     adminCredentialsSaveEnabled
     publicCredentialsSaveEnabled
 
+    resourceManagerEnabled
+
     licenseRequired
     licenseValid
 
     configurationMode
     developmentMode
     redirectOnFederatedAuth
+    distributed
 
     enabledFeatures
     enabledAuthProviders
@@ -46,6 +51,12 @@ query serverConfig {
       buildTime
       releaseTime
       licenseInfo
+    }
+    passwordPolicyConfiguration {
+      minLength
+      minNumberCount
+      minSymbolCount
+      requireMixedCase
     }
   }
 }

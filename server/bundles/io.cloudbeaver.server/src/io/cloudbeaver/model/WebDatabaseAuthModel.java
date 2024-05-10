@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,15 @@ package io.cloudbeaver.model;
 import io.cloudbeaver.DBWebException;
 import io.cloudbeaver.WebServiceUtils;
 import io.cloudbeaver.model.session.WebSession;
+import io.cloudbeaver.utils.WebCommonUtils;
 import org.jkiss.dbeaver.model.connection.DBPAuthModelDescriptor;
 import org.jkiss.dbeaver.model.meta.Property;
+import org.jkiss.dbeaver.model.preferences.DBPPropertyDescriptor;
 import org.jkiss.dbeaver.model.preferences.DBPPropertySource;
+import org.jkiss.utils.CommonUtils;
 
 import java.util.Arrays;
+import java.util.function.Predicate;
 
 /**
  * WebDatabaseAuthModel
@@ -64,12 +68,20 @@ public class WebDatabaseAuthModel {
     }
 
     @Property
+    public String getRequiredAuth() {
+        return CommonUtils.isEmpty(model.getRequiredAuthProviderId()) ? null : model.getRequiredAuthProviderId();
+    }
+
+    @Property
     public WebPropertyInfo[] getProperties() throws DBWebException {
-        boolean hasContextCredentials = webSession.hasContextCredentials();
 
         DBPPropertySource credentialsSource = model.createCredentialsSource(null, null);
+        Predicate<DBPPropertyDescriptor> predicate = CommonUtils.isEmpty(getRequiredAuth())
+            ? p -> true
+            : p -> WebCommonUtils.isAuthPropertyApplicable(p, webSession.getContextCredentialsProviders());
+
         return Arrays.stream(credentialsSource.getProperties())
-            .filter(p -> WebServiceUtils.isAuthPropertyApplicable(p, hasContextCredentials))
+            .filter(predicate)
             .map(p -> new WebPropertyInfo(webSession, p, credentialsSource)).toArray(WebPropertyInfo[]::new);
     }
 

@@ -1,10 +1,23 @@
 query authLogin(
   $provider: ID!
-  $credentials: Object!
+  $configuration: ID
+  $credentials: Object
   $linkUser: Boolean
   $customIncludeOriginDetails: Boolean!
+  $forceSessionsLogout: Boolean
 ) {
-  authToken: authLogin(provider: $provider, credentials: $credentials, linkUser: $linkUser) {
-    ...AuthToken
-  } 
+  authInfo: authLogin(
+    provider: $provider
+    configuration: $configuration
+    credentials: $credentials
+    linkUser: $linkUser
+    forceSessionsLogout: $forceSessionsLogout
+  ) {
+    redirectLink
+    authId
+    authStatus
+    userTokens {
+      ...AuthToken
+    }
+  }
 }

@@ -1,91 +1,90 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import { observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { useRef, useState } from 'react';
-import styled, { css } from 'reshadow';
 
+import { s, SContext, type StyleRegistry, useS } from '@cloudbeaver/core-blocks';
 import { useService } from '@cloudbeaver/core-di';
-import { useStyles } from '@cloudbeaver/core-theming';
-import { BASE_TAB_STYLES, TabList, TabPanelList, TabsState, UNDERLINE_TAB_STYLES } from '@cloudbeaver/core-ui';
+import { TabList, TabPanelList, TabPanelStyles, TabsState, TabStyles, TabUnderlineStyleRegistry } from '@cloudbeaver/core-ui';
+import { MetadataMap } from '@cloudbeaver/core-utils';
 
+import { DatabaseDataResultAction } from '../../DatabaseDataModel/Actions/DatabaseDataResultAction';
+import { DatabaseMetadataAction } from '../../DatabaseDataModel/Actions/DatabaseMetadataAction';
+import { DatabaseSelectAction } from '../../DatabaseDataModel/Actions/DatabaseSelectAction';
 import type { IDatabaseResultSet } from '../../DatabaseDataModel/IDatabaseResultSet';
 import type { DataPresentationComponent } from '../../DataPresentationService';
 import { DataValuePanelService } from './DataValuePanelService';
+import styles from './shared/ValuePanel.m.css';
+import ValuePanelEditorTabPanel from './shared/ValuePanelEditorTabPanel.m.css';
+import ValuePanelEditorTabs from './shared/ValuePanelEditorTabs.m.css';
+import ValuePanelTab from './shared/ValuePanelTab.m.css';
 
-const styles = css`
-    table-left-bar {
-      display: flex;
-    }
-    Tab {
-      composes: theme-ripple from theme-typography--body2 from global;
-      text-transform: uppercase;
-      font-weight: normal;
+const tabListRegistry: StyleRegistry = [...TabUnderlineStyleRegistry, [TabStyles, { mode: 'append', styles: [ValuePanelTab] }]];
 
-      &:global([aria-selected=true]) {
-        font-weight: normal !important;
-      }
-    }
-    TabList {
-      composes: theme-border-color-background from global;
-      position: relative;
-      
-      &:before {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        width: 100%;
-        border-bottom: solid 2px;
-        border-color: inherit;
-      }
-    }
-    TabList tab-outer:only-child {
-      display: none;
-    }
-    TabPanel {
-      padding: 16px;
-    }
-    TabList, TabPanel {
-      composes: theme-background-secondary theme-text-on-secondary from global;
-    }
-  `;
+const tabPanelListRegistry: StyleRegistry = [
+  ...TabUnderlineStyleRegistry,
+  [TabStyles, { mode: 'append', styles: [ValuePanelEditorTabs] }],
+  [TabPanelStyles, { mode: 'append', styles: [ValuePanelEditorTabPanel] }],
+];
 
-export const ValuePanel: DataPresentationComponent<any, IDatabaseResultSet> = observer(function ValuePanel({
-  dataFormat,
-  model,
-  resultIndex,
-}) {
+export const ValuePanel: DataPresentationComponent<any, IDatabaseResultSet> = observer(function ValuePanel({ dataFormat, model, resultIndex }) {
   const service = useService(DataValuePanelService);
-  const [currentTabId, setCurrentTabId] = useState('');
-  const lastTabId = useRef('');
+  const selectAction = model.source.getActionImplementation(resultIndex, DatabaseSelectAction);
+  const dataResultAction = model.source.getActionImplementation(resultIndex, DatabaseDataResultAction);
+  const metadataAction = model.source.getAction(resultIndex, DatabaseMetadataAction);
+  const activeElements = selectAction?.getActiveElements();
+  let elementKey: string | null = null;
+  const style = useS(styles);
 
-  const displayed = service.getDisplayed({ dataFormat, model, resultIndex });
-
-  if (displayed.length > 0) {
-    const firstTabId = displayed[0].key;
-    if (firstTabId !== lastTabId.current) {
-      setCurrentTabId(firstTabId);
-      lastTabId.current = firstTabId;
-    }
+  if (dataResultAction && activeElements && activeElements.length > 0) {
+    elementKey = dataResultAction.getIdentifier(activeElements[0]);
   }
 
-  return styled(useStyles(BASE_TAB_STYLES, styles, UNDERLINE_TAB_STYLES))(
+  const state = metadataAction.get(`value-panel-${elementKey}`, () =>
+    observable(
+      {
+        currentTabId: '',
+        tabsState: new MetadataMap<string, any>(),
+        setCurrentTabId(tabId: string) {
+          this.currentTabId = tabId;
+        },
+      },
+      { tabsState: false },
+      {},
+    ),
+  );
+
+  const displayed = service.getDisplayed({ dataFormat, model, resultIndex });
+  let currentTabId = state.currentTabId;
+
+  const hasCurrentTabCells = currentTabId && displayed.some(tab => tab.key === currentTabId);
+
+  if (displayed.length > 0 && !hasCurrentTabCells) {
+    currentTabId = displayed[0].key;
+  }
+
+  return (
     <TabsState
       currentTabId={currentTabId}
       container={service.tabs}
       dataFormat={dataFormat}
       model={model}
       resultIndex={resultIndex}
+      localState={state.tabsState}
       lazy
-      onChange={tab => setCurrentTabId(tab.tabId)}
+      onChange={tab => state.setCurrentTabId(tab.tabId)}
     >
-      <TabList style={[BASE_TAB_STYLES, styles, UNDERLINE_TAB_STYLES]} />
-      <TabPanelList style={[BASE_TAB_STYLES, styles, UNDERLINE_TAB_STYLES]} />
+      <SContext registry={tabListRegistry}>
+        <TabList className={s(style, { tabList: true })} />
+      </SContext>
+      <SContext registry={tabPanelListRegistry}>
+        <TabPanelList />
+      </SContext>
     </TabsState>
   );
 });

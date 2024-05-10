@@ -1,27 +1,32 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
 
 import { AUTH_PROVIDER_LOCAL_ID } from '@cloudbeaver/core-authentication';
-import { Button, PlaceholderComponent } from '@cloudbeaver/core-blocks';
-import { isLocalConnection } from '@cloudbeaver/core-connections';
-import { useTranslate } from '@cloudbeaver/core-localization';
+import { Button, getComputed, PlaceholderComponent, useResource, useTranslate } from '@cloudbeaver/core-blocks';
+import { DatabaseAuthModelsResource, DBDriverResource } from '@cloudbeaver/core-connections';
 import { useAuthenticationAction } from '@cloudbeaver/core-ui';
 
 import type { IConnectionFormProps } from '../IConnectionFormProps';
 
-export const AuthenticationButton: PlaceholderComponent<IConnectionFormProps> = observer(function ConnectionFormAuthenticationAction({
-  state,
-}) {
+export const AuthenticationButton: PlaceholderComponent<IConnectionFormProps> = observer(function ConnectionFormAuthenticationAction({ state }) {
   const translate = useTranslate();
+  const driverMap = useResource(ConnectionFormAuthenticationAction, DBDriverResource, state.config.driverId || null);
+
+  const driver = driverMap.data;
+  const { data: authModel } = useResource(
+    ConnectionFormAuthenticationAction,
+    DatabaseAuthModelsResource,
+    getComputed(() => state.config.authModelId || state.info?.authModel || driver?.defaultAuthModel || null),
+  );
+
   const authentication = useAuthenticationAction({
-    origin: state.info?.origin ?? { type: AUTH_PROVIDER_LOCAL_ID, displayName: 'Local' },
+    providerId: authModel?.requiredAuth ?? state.info?.requiredAuth ?? AUTH_PROVIDER_LOCAL_ID,
     onAuthenticate: () => state.loadConnectionInfo(),
   });
 
@@ -30,12 +35,7 @@ export const AuthenticationButton: PlaceholderComponent<IConnectionFormProps> = 
   }
 
   return (
-    <Button
-      type="button"
-      disabled={state.disabled}
-      mod={['outlined']}
-      onClick={authentication.auth}
-    >
+    <Button type="button" disabled={state.disabled} mod={['outlined']} onClick={authentication.auth}>
       {translate('authentication_authenticate')}
     </Button>
   );
@@ -44,7 +44,16 @@ export const AuthenticationButton: PlaceholderComponent<IConnectionFormProps> = 
 export const ConnectionFormAuthenticationAction: PlaceholderComponent<IConnectionFormProps> = observer(function ConnectionFormAuthenticationAction({
   state,
 }) {
-  if (!state.info || isLocalConnection(state.info)) {
+  const driverMap = useResource(ConnectionFormAuthenticationAction, DBDriverResource, state.config.driverId || null);
+
+  const driver = driverMap.data;
+  const { data: authModel } = useResource(
+    ConnectionFormAuthenticationAction,
+    DatabaseAuthModelsResource,
+    getComputed(() => state.config.authModelId || state.info?.authModel || driver?.defaultAuthModel || null),
+  );
+
+  if (!authModel?.requiredAuth && !state.info?.requiredAuth) {
     return null;
   }
 

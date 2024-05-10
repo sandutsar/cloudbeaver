@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,148 +16,129 @@
  */
 package io.cloudbeaver.server;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.InstanceCreator;
-import com.google.gson.stream.JsonWriter;
 import io.cloudbeaver.WebServiceUtils;
-import io.cloudbeaver.auth.provider.AuthProviderConfig;
+import io.cloudbeaver.auth.NoAuthCredentialsProvider;
 import io.cloudbeaver.model.app.BaseWebApplication;
-import io.cloudbeaver.model.session.WebAuthInfo;
+import io.cloudbeaver.model.app.WebAuthApplication;
+import io.cloudbeaver.model.app.WebAuthConfiguration;
+import io.cloudbeaver.registry.WebDriverRegistry;
 import io.cloudbeaver.registry.WebServiceRegistry;
 import io.cloudbeaver.server.jetty.CBJettyServer;
 import io.cloudbeaver.service.DBWServiceInitializer;
-import io.cloudbeaver.service.security.SecurityPluginService;
-import io.cloudbeaver.utils.WebAppUtils;
+import io.cloudbeaver.service.DBWServiceServerConfigurator;
+import io.cloudbeaver.service.security.SMControllerConfiguration;
+import io.cloudbeaver.service.session.WebSessionManager;
+import io.cloudbeaver.utils.WebDataSourceUtils;
 import org.eclipse.core.runtime.Platform;
-import org.eclipse.equinox.app.IApplicationContext;
 import org.eclipse.osgi.service.datalocation.Location;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
-import org.jkiss.dbeaver.ModelPreferences;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
-import org.jkiss.dbeaver.model.app.DBPApplication;
-import org.jkiss.dbeaver.model.app.DBPWorkspace;
+import org.jkiss.dbeaver.model.app.DBPPlatform;
+import org.jkiss.dbeaver.model.auth.AuthInfo;
 import org.jkiss.dbeaver.model.auth.SMCredentialsProvider;
-import org.jkiss.dbeaver.model.auth.SMSession;
+import org.jkiss.dbeaver.model.connection.DBPDriver;
 import org.jkiss.dbeaver.model.data.json.JSONUtils;
-import org.jkiss.dbeaver.model.navigator.DBNBrowseSettings;
 import org.jkiss.dbeaver.model.runtime.DBRProgressMonitor;
 import org.jkiss.dbeaver.model.security.SMAdminController;
-import org.jkiss.dbeaver.model.security.SMController;
-import org.jkiss.dbeaver.model.security.SMDataSourceGrant;
+import org.jkiss.dbeaver.model.security.SMConstants;
+import org.jkiss.dbeaver.model.security.SMObjectType;
+import org.jkiss.dbeaver.model.websocket.event.WSEventController;
+import org.jkiss.dbeaver.model.websocket.event.WSServerConfigurationChangedEvent;
 import org.jkiss.dbeaver.registry.BaseApplicationImpl;
-import org.jkiss.dbeaver.registry.DataSourceNavigatorSettings;
 import org.jkiss.dbeaver.runtime.DBWorkbench;
-import org.jkiss.dbeaver.runtime.IVariableResolver;
+import org.jkiss.dbeaver.runtime.ui.DBPPlatformUI;
 import org.jkiss.dbeaver.utils.GeneralUtils;
-import org.jkiss.dbeaver.utils.PrefUtils;
 import org.jkiss.dbeaver.utils.SystemVariablesResolver;
 import org.jkiss.utils.ArrayUtils;
 import org.jkiss.utils.CommonUtils;
 import org.jkiss.utils.StandardConstants;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.URL;
 import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.Permission;
 import java.security.Policy;
 import java.security.ProtectionDomain;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * This class controls all aspects of the application's execution
  */
-public class CBApplication extends BaseWebApplication {
+public abstract class CBApplication<T extends CBServerConfig> extends BaseWebApplication implements WebAuthApplication {
 
     private static final Log log = Log.getLog(CBApplication.class);
 
     private static final boolean RECONFIGURATION_ALLOWED = true;
+    /**
+     * In configuration mode sessions expire after a week
+     */
+    private static final long CONFIGURATION_MODE_SESSION_IDLE_TIME = 60 * 60 * 1000 * 24 * 7;
+    public static final String HOST_LOCALHOST = "localhost";
+    public static final String HOST_127_0_0_1 = "127.0.0.1";
+
 
     static {
         Log.setDefaultDebugStream(System.out);
     }
 
-    private String staticContent = "";
 
     public static CBApplication getInstance() {
         return (CBApplication) BaseApplicationImpl.getInstance();
     }
 
-    private String serverURL;
-    private int serverPort = CBConstants.DEFAULT_SERVER_PORT;
-    private String serverHost = null;
-    private String serverName = null;
-    private String contentRoot = CBConstants.DEFAULT_CONTENT_ROOT;
-    private String rootURI = CBConstants.DEFAULT_ROOT_URI;
-    private String servicesURI = CBConstants.DEFAULT_SERVICES_URI;
-
-    private String workspaceLocation = CBConstants.DEFAULT_WORKSPACE_LOCATION;
-    private String driversLocation = CBConstants.DEFAULT_DRIVERS_LOCATION;
-    private File homeDirectory;
-
-    // Configurations
-    private final Map<String, Object> productConfiguration = new HashMap<>();
-    private final Map<String, Object> databaseConfiguration = new HashMap<>();
-    private final CBAppConfig appConfiguration = new CBAppConfig();
-    private Map<String, String> externalProperties = new LinkedHashMap<>();
+    private final File homeDirectory;
 
     // Persistence
-    private SMAdminController securityController;
-
-    private long maxSessionIdleTime = CBConstants.MAX_SESSION_IDLE_TIME;
-
-    private boolean develMode = false;
+    protected SMAdminController securityController;
     private boolean configurationMode = false;
-    private boolean enableSecurityManager = false;
     private String localHostAddress;
+    protected String containerId;
     private final List<InetAddress> localInetAddresses = new ArrayList<>();
 
+    protected final WSEventController eventController = new WSEventController();
+
+    private WebSessionManager sessionManager;
+
     public CBApplication() {
+        this.homeDirectory = new File(initHomeFolder());
     }
 
     public String getServerURL() {
-        return serverURL;
+        return getServerConfiguration().getServerURL();
     }
 
     // Port this server listens on. If set the 0 a random port is assigned which may be obtained with getLocalPort()
+    @Override
     public int getServerPort() {
-        return serverPort;
+        return getServerConfiguration().getServerPort();
     }
 
     // The network interface this connector binds to as an IP address or a hostname.  If null or 0.0.0.0, then bind to all interfaces.
     public String getServerHost() {
-        return serverHost;
+        return getServerConfiguration().getServerHost();
     }
 
     public String getServerName() {
-        return serverName;
-    }
-
-    public String getContentRoot() {
-        return contentRoot;
+        return getServerConfiguration().getServerName();
     }
 
     public String getRootURI() {
-        return rootURI;
+        return getServerConfiguration().getRootURI();
     }
 
     public String getServicesURI() {
-        return servicesURI;
+        return getServerConfiguration().getServicesURI();
     }
 
-    public String getDriversLocation() {
-        return driversLocation;
-    }
 
     public Path getHomeDirectory() {
         return homeDirectory.toPath();
@@ -168,67 +149,82 @@ public class CBApplication extends BaseWebApplication {
         return false;
     }
 
+    /**
+     * @return actual max session idle time
+     */
     public long getMaxSessionIdleTime() {
-        return maxSessionIdleTime;
+        if (isConfigurationMode()) {
+            return CONFIGURATION_MODE_SESSION_IDLE_TIME;
+        }
+        return getServerConfiguration().getMaxSessionIdleTime();
     }
 
+    /**
+     * @return max session idle time from server configuration, may differ from {@link #getMaxSessionIdleTime()}
+     */
+
     public CBAppConfig getAppConfiguration() {
-        return appConfiguration;
+        return getServerConfigurationController().getAppConfiguration();
+    }
+
+    public T getServerConfiguration() {
+        return getServerConfigurationController().getServerConfiguration();
+    }
+
+    @Override
+    public WebAuthConfiguration getAuthConfiguration() {
+        return getAppConfiguration();
+    }
+
+    @Override
+    public String getAuthServiceURL() {
+        return getServerConfigurationController().getAuthServiceURL();
     }
 
     public Map<String, Object> getProductConfiguration() {
-        return productConfiguration;
+        return getServerConfigurationController().getProductConfiguration();
     }
 
-    public SMController getSecurityController() {
+    public SMControllerConfiguration getSecurityManagerConfiguration() {
+        return getServerConfiguration().getSecurityManagerConfiguration();
+    }
+
+    public SMAdminController getSecurityController() {
         return securityController;
     }
 
     @Override
-    public SMController getSecurityController(@NotNull SMCredentialsProvider credentialsProvider) {
-        return securityController;
-    }
-
-    @Override
-    public SMAdminController getAdminSecurityController(@NotNull SMCredentialsProvider credentialsProvider) {
-        return securityController;
-    }
-
-    @Override
-    public boolean isHeadlessMode() {
-        return true;
-    }
-
-    @Override
-    public boolean isMultiuser() {
-        return true;
-    }
-
-    @Override
-    public Object start(IApplicationContext context) {
-        Path configPath = null;
+    protected void startServer() {
+        CBPlatform.setApplication(this);
         try {
-            configPath = loadServerConfiguration();
-            if (configPath == null) {
-                return null;
+            if (!loadServerConfiguration()) {
+                return;
+            }
+            if (CommonUtils.isEmpty(this.getAppConfiguration().getDefaultUserTeam())) {
+                throw new DBException("Default user team must be specified");
             }
         } catch (DBException e) {
             log.error(e);
-            return null;
+            return;
         }
+        refreshDisabledDriversConfig();
 
-        configurationMode = CommonUtils.isEmpty(serverName);
+        configurationMode = CommonUtils.isEmpty(getServerConfiguration().getServerName());
+
+        eventController.setForceSkipEvents(isConfigurationMode()); // do not send events if configuration mode is on
 
         // Determine address for local host
         localHostAddress = System.getenv(CBConstants.VAR_CB_LOCAL_HOST_ADDR);
         if (CommonUtils.isEmpty(localHostAddress)) {
             localHostAddress = System.getProperty(CBConstants.VAR_CB_LOCAL_HOST_ADDR);
         }
-        if (CommonUtils.isEmpty(localHostAddress) || "127.0.0.1".equals(localHostAddress) || "::0".equals(localHostAddress)) {
-            localHostAddress = "localhost";
+        if (CommonUtils.isEmpty(localHostAddress) || HOST_127_0_0_1.equals(localHostAddress) || "::0".equals(
+            localHostAddress)) {
+            localHostAddress = HOST_LOCALHOST;
         }
 
         final Runtime runtime = Runtime.getRuntime();
+        initializeAdditionalConfiguration();
 
         Location instanceLoc = Platform.getInstanceLocation();
         try {
@@ -236,32 +232,32 @@ public class CBApplication extends BaseWebApplication {
                 URL wsLocationURL = new URL(
                     "file",  //$NON-NLS-1$
                     null,
-                    workspaceLocation);
+                    getServerConfiguration().getWorkspaceLocation());
                 instanceLoc.set(wsLocationURL, true);
             }
         } catch (Exception e) {
-            log.error("Error setting workspace location to " + workspaceLocation, e);
-            return null;
+            log.error("Error setting workspace location to " + getServerConfiguration().getWorkspaceLocation(), e);
+            return;
         }
 
-        CBPlatform.setApplication(this);
-
         log.debug(GeneralUtils.getProductName() + " " + GeneralUtils.getProductVersion() + " is starting"); //$NON-NLS-1$
-        log.debug("\tOS: " + System.getProperty(StandardConstants.ENV_OS_NAME) + " " + System.getProperty(StandardConstants.ENV_OS_VERSION) + " (" + System.getProperty(StandardConstants.ENV_OS_ARCH) + ")");
-        log.debug("\tJava version: " + System.getProperty(StandardConstants.ENV_JAVA_VERSION) + " by " + System.getProperty(StandardConstants.ENV_JAVA_VENDOR) + " (" + System.getProperty(StandardConstants.ENV_JAVA_ARCH) + "bit)");
+        log.debug("\tOS: " + System.getProperty(StandardConstants.ENV_OS_NAME) + " " + System.getProperty(
+            StandardConstants.ENV_OS_VERSION) + " (" + System.getProperty(StandardConstants.ENV_OS_ARCH) + ")");
+        log.debug("\tJava version: " + System.getProperty(StandardConstants.ENV_JAVA_VERSION) + " by " + System.getProperty(
+            StandardConstants.ENV_JAVA_VENDOR) + " (" + System.getProperty(StandardConstants.ENV_JAVA_ARCH) + "bit)");
         log.debug("\tInstall path: '" + SystemVariablesResolver.getInstallPath() + "'"); //$NON-NLS-1$ //$NON-NLS-2$
         log.debug("\tGlobal workspace: '" + instanceLoc.getURL() + "'"); //$NON-NLS-1$ //$NON-NLS-2$
         log.debug("\tMemory available " + (runtime.totalMemory() / (1024 * 1024)) + "Mb/" + (runtime.maxMemory() / (1024 * 1024)) + "Mb");
 
-        DBPApplication application = DBWorkbench.getPlatform().getApplication();
+        DBWorkbench.getPlatform().getApplication();
 
-        log.debug("\tContent root: " + new File(contentRoot).getAbsolutePath());
-        log.debug("\tDrivers storage: " + new File(driversLocation).getAbsolutePath());
+        log.debug("\tContent root: " + new File(getServerConfiguration().getContentRoot()).getAbsolutePath());
+        log.debug("\tDrivers storage: " + new File(getServerConfiguration().getDriversLocation()).getAbsolutePath());
         //log.debug("\tDrivers root: " + driversLocation);
         //log.debug("\tProduct details: " + application.getInfoDetails());
-        log.debug("\tListen port: " + serverPort + (CommonUtils.isEmpty(serverHost) ? " on all interfaces" : " on " + serverHost));
-        log.debug("\tBase URI: " + servicesURI);
-        if (develMode) {
+        log.debug("\tListen port: " + getServerPort() + (CommonUtils.isEmpty(getServerHost()) ? " on all interfaces" : " on " + getServerHost()));
+        log.debug("\tBase URI: " + getServicesURI());
+        if (isDevelMode()) {
             log.debug("\tDevelopment mode");
         } else {
             log.debug("\tProduction mode");
@@ -278,7 +274,8 @@ public class CBApplication extends BaseWebApplication {
         }
         {
             // Perform services initialization
-            for (DBWServiceInitializer wsi : WebServiceRegistry.getInstance().getWebServices(DBWServiceInitializer.class)) {
+            for (DBWServiceInitializer wsi : WebServiceRegistry.getInstance()
+                .getWebServices(DBWServiceInitializer.class)) {
                 try {
                     wsi.initializeService(this);
                 } catch (Exception e) {
@@ -288,21 +285,33 @@ public class CBApplication extends BaseWebApplication {
 
         }
 
-        {
-            try {
-                initializeSecurityController();
-            } catch (Exception e) {
-                log.error("Error initializing database", e);
-                return null;
-            }
+        try {
+            initializeServer();
+        } catch (DBException e) {
+            log.error("Error initializing server", e);
+            return;
         }
+
+        try {
+            initializeSecurityController();
+        } catch (Exception e) {
+            log.error("Error initializing database", e);
+            return;
+        }
+
 
         if (configurationMode) {
             // Try to configure automatically
-            performAutoConfiguration(configPath.toFile().getParentFile());
+            performAutoConfiguration(getMainConfigurationFilePath().toFile().getParentFile());
+        } else if (!isMultiNode()) {
+            var appConfiguration = getServerConfigurationController().getAppConfiguration();
+            if (appConfiguration.isGrantConnectionsAccessToAnonymousTeam()) {
+                grantAnonymousAccessToConnections(appConfiguration, CBConstants.ADMIN_AUTO_GRANT);
+            }
+            grantPermissionsToConnections();
         }
 
-        if (enableSecurityManager) {
+        if (getServerConfiguration().isEnableSecurityManager()) {
             Policy.setPolicy(new Policy() {
                 @Override
                 public boolean implies(ProtectionDomain domain, Permission permission) {
@@ -312,17 +321,17 @@ public class CBApplication extends BaseWebApplication {
             System.setSecurityManager(new SecurityManager());
         }
 
-        try {
-            initializeServer();
-        } catch (DBException e) {
-            log.error("Error initializing server", e);
-            return null;
-        }
+        eventController.scheduleCheckJob();
+
         runWebServer();
 
         log.debug("Shutdown");
 
-        return null;
+        return;
+    }
+
+    protected void initializeAdditionalConfiguration() {
+
     }
 
     /**
@@ -337,7 +346,8 @@ public class CBApplication extends BaseWebApplication {
         String autoAdminName = System.getenv(CBConstants.VAR_AUTO_CB_ADMIN_NAME);
         String autoAdminPassword = System.getenv(CBConstants.VAR_AUTO_CB_ADMIN_PASSWORD);
 
-        if (CommonUtils.isEmpty(autoServerName) || CommonUtils.isEmpty(autoAdminName) || CommonUtils.isEmpty(autoAdminPassword)) {
+        if (CommonUtils.isEmpty(autoServerName) || CommonUtils.isEmpty(autoAdminName) || CommonUtils.isEmpty(
+            autoAdminPassword)) {
             // Try to load from auto config file
             if (configPath.exists()) {
                 File autoConfigFile = new File(configPath, CBConstants.AUTO_CONFIG_FILE_NAME);
@@ -351,13 +361,15 @@ public class CBApplication extends BaseWebApplication {
                         autoAdminName = autoProps.getProperty(CBConstants.VAR_AUTO_CB_ADMIN_NAME);
                         autoAdminPassword = autoProps.getProperty(CBConstants.VAR_AUTO_CB_ADMIN_PASSWORD);
                     } catch (IOException e) {
-                        log.error("Error loading auto configuration file '" + autoConfigFile.getAbsolutePath() + "'", e);
+                        log.error("Error loading auto configuration file '" + autoConfigFile.getAbsolutePath() + "'",
+                            e);
                     }
                 }
             }
         }
 
-        if (CommonUtils.isEmpty(autoServerName) || CommonUtils.isEmpty(autoAdminName) || CommonUtils.isEmpty(autoAdminPassword)) {
+        if (CommonUtils.isEmpty(autoServerName) || CommonUtils.isEmpty(autoAdminName) || CommonUtils.isEmpty(
+            autoAdminPassword)) {
             log.info("No auto configuration was found. Server must be configured manually");
             return;
         }
@@ -368,15 +380,24 @@ public class CBApplication extends BaseWebApplication {
                 autoAdminName,
                 autoAdminPassword,
                 Collections.emptyList(),
-                maxSessionIdleTime,
-                getAppConfiguration());
+                getMaxSessionIdleTime(),
+                getAppConfiguration(),
+                null
+            );
         } catch (Exception e) {
             log.error("Error loading server auto configuration", e);
         }
     }
 
     protected void initializeServer() throws DBException {
-
+        for (DBWServiceServerConfigurator wsc : WebServiceRegistry.getInstance()
+            .getWebServices(DBWServiceServerConfigurator.class)) {
+            try {
+                wsc.migrateConfigurationIfNeeded(this);
+            } catch (Exception e) {
+                log.warn("Error migration configuration " + wsc.getClass().getName(), e);
+            }
+        }
     }
 
     private void determineLocalAddresses() {
@@ -415,18 +436,8 @@ public class CBApplication extends BaseWebApplication {
     }
 
     @NotNull
-    private File getRuntimeAppConfigFile() {
-       return getDataDirectory(true).resolve(CBConstants.RUNTIME_APP_CONFIG_FILE_NAME).toFile();
-    }
-
-    @NotNull
-    private Path getRuntimeProductConfigFilePath() {
-        return getDataDirectory(false).resolve(CBConstants.RUNTIME_PRODUCT_CONFIG_FILE_NAME);
-    }
-
-    @NotNull
     public Path getDataDirectory(boolean create) {
-        File dataDir = new File(workspaceLocation, CBConstants.RUNTIME_DATA_DIR_NAME);
+        File dataDir = new File(getServerConfiguration().getWorkspaceLocation(), CBConstants.RUNTIME_DATA_DIR_NAME);
         if (create && !dataDir.exists()) {
             if (!dataDir.mkdirs()) {
                 log.error("Can't create data directory '" + dataDir.getAbsolutePath() + "'");
@@ -435,49 +446,19 @@ public class CBApplication extends BaseWebApplication {
         return dataDir.toPath();
     }
 
+    @Override
+    public Path getWorkspaceDirectory() {
+        return Path.of(getServerConfiguration().getWorkspaceLocation());
+    }
+
     private void initializeSecurityController() throws DBException {
         securityController = createGlobalSecurityController();
     }
 
-    protected SMAdminController createGlobalSecurityController() throws DBException {
-        return SecurityPluginService.createSecurityService(this, databaseConfiguration);
-    }
+    protected abstract SMAdminController createGlobalSecurityController() throws DBException;
 
-    @Nullable
-    public SMSession getServerSession(DBRProgressMonitor monitor) throws DBException {
-        DBPWorkspace workspace = DBWorkbench.getPlatform().getWorkspace();
-        return workspace.getAuthContext().getSpaceSession(monitor, workspace, false);
-    }
-
-    @Nullable
-    @Override
-    protected Path loadServerConfiguration() throws DBException {
-        Path path = super.loadServerConfiguration();
-
-        File runtimeConfigFile = getRuntimeAppConfigFile();
-        if (runtimeConfigFile.exists()) {
-            log.debug("Runtime configuration [" + runtimeConfigFile.getAbsolutePath() + "]");
-            parseConfiguration(runtimeConfigFile);
-        }
-
-        return path;
-    }
-
-    @Override
-    protected void loadConfiguration(String configPath) throws DBException {
-        log.debug("Using configuration [" + configPath + "]");
-
-        File configFile = new File(configPath);
-        if (!configFile.exists()) {
-            log.error("Configuration file " + configFile.getAbsolutePath() + " doesn't exist. Use defaults.");
-        } else {
-            parseConfiguration(configFile);
-        }
-        // Set default preferences
-        PrefUtils.setDefaultPreferenceValue(ModelPreferences.getPreferences(), ModelPreferences.UI_DRIVERS_HOME, getDriversLocation());
-    }
-
-    private void parseConfiguration(File configFile) throws DBException {
+    @NotNull
+    protected String initHomeFolder() {
         String homeFolder = System.getenv(CBConstants.ENV_CB_HOME);
         if (CommonUtils.isEmpty(homeFolder)) {
             homeFolder = System.getProperty("user.dir");
@@ -485,148 +466,16 @@ public class CBApplication extends BaseWebApplication {
         if (CommonUtils.isEmpty(homeFolder)) {
             homeFolder = ".";
         }
-        homeDirectory = new File(homeFolder);
-        String productConfigPath = null;
-
-        CBAppConfig prevConfig = new CBAppConfig(appConfiguration);
-
-        // Stupid way to populate existing objects but ok google (https://github.com/google/gson/issues/431)
-        InstanceCreator<CBAppConfig> appConfigCreator = type -> appConfiguration;
-        InstanceCreator<DataSourceNavigatorSettings> navSettingsCreator = type -> (DataSourceNavigatorSettings) appConfiguration.getDefaultNavigatorSettings();
-
-        Gson gson = new GsonBuilder()
-            .setLenient()
-            .registerTypeAdapter(CBAppConfig.class, appConfigCreator)
-            .registerTypeAdapter(DataSourceNavigatorSettings.class, navSettingsCreator)
-            .create();
-
-        try (Reader reader = new InputStreamReader(new FileInputStream(configFile), StandardCharsets.UTF_8)) {
-            Map<String, Object> configProps = JSONUtils.parseMap(gson, reader);
-
-            Map<String, Object> serverConfig = JSONUtils.getObject(configProps, "server");
-
-            String externalPropertiesFile = JSONUtils.getString(serverConfig, CBConstants.PARAM_EXTERNAL_PROPERTIES);
-            if (!CommonUtils.isEmpty(externalPropertiesFile)) {
-                Properties props = new Properties();
-                try (InputStream is = Files.newInputStream(Path.of(externalPropertiesFile))) {
-                    props.load(is);
-                } catch (IOException e) {
-                    log.error("Error loading external properties from " + externalPropertiesFile, e);
-                }
-                for (String propName : props.stringPropertyNames()) {
-                    this.externalProperties.put(propName, props.getProperty(propName));
-                }
-            }
-
-            patchConfigurationWithProperties(configProps);
-
-            serverPort = JSONUtils.getInteger(serverConfig, CBConstants.PARAM_SERVER_PORT, serverPort);
-            serverHost = JSONUtils.getString(serverConfig, CBConstants.PARAM_SERVER_HOST, serverHost);
-            if (serverConfig.containsKey(CBConstants.PARAM_SERVER_URL)) {
-                serverURL = JSONUtils.getString(serverConfig, CBConstants.PARAM_SERVER_URL, serverURL);
-            } else if (serverURL == null) {
-                String hostName = serverHost;
-                if (CommonUtils.isEmpty(hostName)) {
-                    hostName = InetAddress.getLocalHost().getHostName();
-                }
-                serverURL = "http://" + hostName + ":" + serverPort;
-            }
-
-            serverName = JSONUtils.getString(serverConfig, CBConstants.PARAM_SERVER_NAME, serverName);
-            contentRoot = WebAppUtils.getRelativePath(
-                JSONUtils.getString(serverConfig, CBConstants.PARAM_CONTENT_ROOT, contentRoot), homeFolder);
-            rootURI = JSONUtils.getString(serverConfig, CBConstants.PARAM_ROOT_URI, rootURI);
-            servicesURI = JSONUtils.getString(serverConfig, CBConstants.PARAM_SERVICES_URI, servicesURI);
-            driversLocation = WebAppUtils.getRelativePath(
-                JSONUtils.getString(serverConfig, CBConstants.PARAM_DRIVERS_LOCATION, driversLocation), homeFolder);
-            workspaceLocation = WebAppUtils.getRelativePath(
-                JSONUtils.getString(serverConfig, CBConstants.PARAM_WORKSPACE_LOCATION, workspaceLocation), homeFolder);
-
-            maxSessionIdleTime = JSONUtils.getLong(serverConfig, CBConstants.PARAM_SESSION_EXPIRE_PERIOD, maxSessionIdleTime);
-
-            develMode = JSONUtils.getBoolean(serverConfig, CBConstants.PARAM_DEVEL_MODE, develMode);
-            enableSecurityManager = JSONUtils.getBoolean(serverConfig, CBConstants.PARAM_SECURITY_MANAGER, enableSecurityManager);
-
-            // App config
-            Map<String, Object> appConfig = JSONUtils.getObject(configProps, "app");
-            gson.fromJson(gson.toJsonTree(appConfig), CBAppConfig.class);
-            databaseConfiguration.putAll(JSONUtils.getObject(serverConfig, CBConstants.PARAM_DB_CONFIGURATION));
-
-            productConfigPath = WebAppUtils.getRelativePath(
-                JSONUtils.getString(
-                    serverConfig,
-                    CBConstants.PARAM_PRODUCT_CONFIGURATION,
-                    CBConstants.DEFAULT_PRODUCT_CONFIGURATION
-                ),
-                homeFolder
-            );
-
-            String staticContentsFile = JSONUtils.getString(serverConfig, CBConstants.PARAM_STATIC_CONTENT);
-            if (!CommonUtils.isEmpty(staticContentsFile)) {
-                try {
-                    staticContent = Files.readString(Path.of(staticContentsFile));
-                } catch (IOException e) {
-                    log.error("Error reading static contents from " + staticContentsFile, e);
-                }
-            }
-            parseAdditionalServerConfiguration(serverConfig);
-        } catch (IOException | DBException e) {
-            throw new DBException("Error parsing server configuration", e);
-        }
-
-        // Merge new config with old one
-        {
-            Map<String, Object> mergedPlugins = Stream.concat(
-                    prevConfig.getPlugins().entrySet().stream(),
-                    appConfiguration.getPlugins().entrySet().stream()
-                )
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (o, o2) -> o2));
-            appConfiguration.setPlugins(mergedPlugins);
-
-            Map<String, AuthProviderConfig> mergedAuthProviders = Stream.concat(
-                    prevConfig.getAuthProviderConfigurations().entrySet().stream(),
-                    appConfiguration.getAuthProviderConfigurations().entrySet().stream()
-                )
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (o, o2) -> o2));
-            appConfiguration.setAuthProvidersConfiguration(mergedAuthProviders);
-        }
-
-        if (!CommonUtils.isEmpty(productConfigPath)) {
-            File productConfigFile = new File(productConfigPath);
-            if (!productConfigFile.exists()) {
-                log.error("Product configuration file not found (" + productConfigFile.getAbsolutePath() + "'");
-            } else {
-                log.debug("Load product configuration from '" + productConfigFile.getAbsolutePath() + "'");
-                try (Reader reader = new InputStreamReader(new FileInputStream(productConfigFile), StandardCharsets.UTF_8)) {
-                    productConfiguration.putAll(JSONUtils.parseMap(gson, reader));
-                } catch (Exception e) {
-                    throw new DBException("Error reading product configuration", e);
-                }
-            }
-        }
-
-        // Add product config from runtime
-        {
-            File rtConfig = getRuntimeProductConfigFilePath().toFile();
-            if (rtConfig.exists()) {
-                log.debug("Load product runtime configuration from '" + rtConfig.getAbsolutePath() + "'");
-                try (Reader reader = new InputStreamReader(new FileInputStream(rtConfig), StandardCharsets.UTF_8)) {
-                    productConfiguration.putAll(JSONUtils.parseMap(gson, reader));
-                } catch (Exception e) {
-                    throw new DBException("Error reading product runtime configuration", e);
-                }
-            }
-        }
-        patchConfigurationWithProperties(productConfiguration);
-    }
-
-    protected void parseAdditionalServerConfiguration(Map<String, Object> serverConfig) throws DBException {
-
+        return homeFolder;
     }
 
     private void runWebServer() {
-        log.debug("Starting Jetty server (" + serverPort + " on " + (CommonUtils.isEmpty(serverHost) ? "all interfaces" : serverHost) + ") ");
-        new CBJettyServer().runServer();
+        log.debug(
+            String.format("Starting Jetty server (%d on %s) ",
+                getServerPort(),
+                CommonUtils.isEmpty(getServerHost()) ? "all interfaces" : getServerHost())
+        );
+        new CBJettyServer(this).runServer();
     }
 
 
@@ -635,7 +484,7 @@ public class CBApplication extends BaseWebApplication {
         shutdown();
     }
 
-    private void shutdown() {
+    protected void shutdown() {
         log.debug("Cloudbeaver Server is stopping"); //$NON-NLS-1$
     }
 
@@ -650,7 +499,7 @@ public class CBApplication extends BaseWebApplication {
     }
 
     public boolean isDevelMode() {
-        return develMode;
+        return getServerConfiguration().isDevelMode();
     }
 
     public boolean isConfigurationMode() {
@@ -679,9 +528,11 @@ public class CBApplication extends BaseWebApplication {
         @NotNull String newServerURL,
         @NotNull String adminName,
         @Nullable String adminPassword,
-        @NotNull List<WebAuthInfo> authInfoList,
+        @NotNull List<AuthInfo> authInfoList,
         long sessionExpireTime,
-        @NotNull CBAppConfig appConfig) throws DBException {
+        @NotNull CBAppConfig appConfig,
+        @Nullable SMCredentialsProvider credentialsProvider
+    ) throws DBException {
         if (!RECONFIGURATION_ALLOWED && !isConfigurationMode()) {
             throw new DBException("Application must be in configuration mode");
         }
@@ -692,48 +543,72 @@ public class CBApplication extends BaseWebApplication {
 
         // Save runtime configuration
         log.debug("Saving runtime configuration");
-        saveRuntimeConfig(newServerName, newServerURL, sessionExpireTime, appConfig);
+        getServerConfigurationController().saveRuntimeConfig(newServerName, newServerURL, sessionExpireTime, appConfig, credentialsProvider);
 
         // Grant permissions to predefined connections
-        if (isConfigurationMode() && appConfig.isAnonymousAccessEnabled()) {
+        if (appConfig.isGrantConnectionsAccessToAnonymousTeam()) {
             grantAnonymousAccessToConnections(appConfig, adminName);
         }
+        reloadConfiguration(credentialsProvider);
+    }
 
+    public synchronized void reloadConfiguration(@Nullable SMCredentialsProvider credentialsProvider) throws DBException {
         // Re-load runtime configuration
         try {
+            Path runtimeAppConfigPath = getServerConfigurationController().getRuntimeAppConfigPath();
             log.debug("Reloading application configuration");
-            File runtimeConfigFile = getRuntimeAppConfigFile();
-            if (runtimeConfigFile.exists()) {
-                log.debug("Runtime configuration [" + runtimeConfigFile.getAbsolutePath() + "]");
-                parseConfiguration(runtimeConfigFile);
-            }
+            getServerConfigurationController().loadConfiguration(runtimeAppConfigPath);
         } catch (Exception e) {
             throw new DBException("Error parsing configuration", e);
         }
 
-        configurationMode = CommonUtils.isEmpty(serverName);
+        configurationMode = CommonUtils.isEmpty(getServerName());
+
+        // Reloading configuration by services
+        for (DBWServiceServerConfigurator wsc : WebServiceRegistry.getInstance()
+            .getWebServices(DBWServiceServerConfigurator.class)) {
+            try {
+                wsc.reloadConfiguration(getAppConfiguration());
+            } catch (Exception e) {
+                log.warn("Error reloading configuration by web service " + wsc.getClass().getName(), e);
+            }
+        }
+
+        sendConfigChangedEvent(credentialsProvider);
+        eventController.setForceSkipEvents(isConfigurationMode());
     }
 
-    protected void finishSecurityServiceConfiguration(@NotNull String adminName, @Nullable String adminPassword, @NotNull List<WebAuthInfo> authInfoList) throws DBException {
-        SecurityPluginService.finishConfiguration(adminName, adminPassword, authInfoList);
+    protected abstract void finishSecurityServiceConfiguration(
+        @NotNull String adminName,
+        @Nullable String adminPassword,
+        @NotNull List<AuthInfo> authInfoList
+    ) throws DBException;
+
+    public synchronized void flushConfiguration(SMCredentialsProvider webSession) throws DBException {
+        getServerConfigurationController().saveRuntimeConfig(webSession);
     }
 
     public synchronized void flushConfiguration() throws DBException {
-        saveRuntimeConfig(serverName, serverURL, maxSessionIdleTime, appConfiguration);
+        getServerConfigurationController().saveRuntimeConfig(new NoAuthCredentialsProvider());
     }
 
 
     private void grantAnonymousAccessToConnections(CBAppConfig appConfig, String adminName) {
         try {
-            String anonymousRoleId = appConfig.getAnonymousUserRole();
-            SMController securityController = getSecurityController();
+            String anonymousTeamId = appConfig.getAnonymousUserTeam();
+            var securityController = getSecurityController();
             for (DBPDataSourceContainer ds : WebServiceUtils.getGlobalDataSourceRegistry().getDataSources()) {
-                SMDataSourceGrant[] grants = securityController.getConnectionSubjectAccess(ds.getId());
-                if (ArrayUtils.isEmpty(grants)) {
-                    securityController.setConnectionSubjectAccess(
-                        ds.getId(),
-                        new String[]{anonymousRoleId},
-                        adminName);
+                var datasourcePermissions = securityController.getObjectPermissions(anonymousTeamId,
+                    ds.getId(),
+                    SMObjectType.datasource);
+                if (ArrayUtils.isEmpty(datasourcePermissions.getPermissions())) {
+                    securityController.setObjectPermissions(
+                        Set.of(ds.getId()),
+                        SMObjectType.datasource,
+                        Set.of(anonymousTeamId),
+                        Set.of(SMConstants.DATA_SOURCE_ACCESS_PERMISSION),
+                        adminName
+                    );
                 }
             }
         } catch (Exception e) {
@@ -741,108 +616,42 @@ public class CBApplication extends BaseWebApplication {
         }
     }
 
-    private void saveRuntimeConfig(String newServerName, String newServerURL, long sessionExpireTime, CBAppConfig appConfig) throws DBException {
+    private void grantPermissionsToConnections() {
+        try {
+            var globalRegistry = WebDataSourceUtils.getGlobalDataSourceRegistry();
+            var permissionsConfiguration = getServerConfigurationController().readConnectionsPermissionsConfiguration(
+                globalRegistry.getProject().getMetadataFolder(false));
 
-        File runtimeConfigFile = getRuntimeAppConfigFile();
-        try (Writer out = new OutputStreamWriter(new FileOutputStream(runtimeConfigFile), StandardCharsets.UTF_8)) {
-            Gson gson = new GsonBuilder()
-                .setLenient()
-                .setPrettyPrinting()
-                .create();
-            try (JsonWriter json = gson.newJsonWriter(out)) {
-                json.setLenient(true);
-                json.beginObject();
-                {
-                    json.name("server");
-                    json.beginObject();
-                    if (!CommonUtils.isEmpty(newServerName)) {
-                        JSONUtils.field(json, CBConstants.PARAM_SERVER_NAME, newServerName);
-                    }
-                    if (!CommonUtils.isEmpty(newServerURL)) {
-                        JSONUtils.field(json, CBConstants.PARAM_SERVER_URL, newServerURL);
-                    }
-                    if (sessionExpireTime > 0) {
-                        JSONUtils.field(json, CBConstants.PARAM_SESSION_EXPIRE_PERIOD, sessionExpireTime);
-                    }
-
-                    if (!CommonUtils.isEmpty(databaseConfiguration)) {
-                        JSONUtils.serializeProperties(json, CBConstants.PARAM_DB_CONFIGURATION, databaseConfiguration);
-                    }
-                    json.endObject();
-                }
-                {
-                    json.name("app");
-                    json.beginObject();
-                    JSONUtils.field(json, "anonymousAccessEnabled", appConfig.isAnonymousAccessEnabled());
-                    JSONUtils.field(json, "supportsCustomConnections", appConfig.isSupportsCustomConnections());
-                    JSONUtils.field(json, "publicCredentialsSaveEnabled", appConfig.isPublicCredentialsSaveEnabled());
-                    JSONUtils.field(json, "adminCredentialsSaveEnabled", appConfig.isAdminCredentialsSaveEnabled());
-                    JSONUtils.field(json, "enableReverseProxyAuth", appConfig.isEnabledReverseProxyAuth());
-                    JSONUtils.field(json, CBConstants.PARAM_RESOURCE_MANAGER_ENABLED, appConfig.isResourceManagerEnabled());
-
-                    Map<String, Object> resourceQuotas = appConfig.getResourceQuotas();
-                    if (!CommonUtils.isEmpty(resourceQuotas)) {
-                        JSONUtils.serializeProperties(json, CBConstants.PARAM_RESOURCE_QUOTAS, resourceQuotas);
-                    }
-
-                    {
-                        // Save only differences in def navigator settings
-                        DBNBrowseSettings navSettings = appConfig.getDefaultNavigatorSettings();
-
-                        json.name("defaultNavigatorSettings");
-                        json.beginObject();
-                        if (navSettings.isShowSystemObjects() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isShowSystemObjects())
-                            JSONUtils.field(json, "showSystemObjects", navSettings.isShowSystemObjects());
-                        if (navSettings.isShowUtilityObjects() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isShowUtilityObjects())
-                            JSONUtils.field(json, "showUtilityObjects", navSettings.isShowUtilityObjects());
-                        if (navSettings.isShowOnlyEntities() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isShowOnlyEntities())
-                            JSONUtils.field(json, "showOnlyEntities", navSettings.isShowOnlyEntities());
-                        if (navSettings.isMergeEntities() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isMergeEntities())
-                            JSONUtils.field(json, "mergeEntities", navSettings.isMergeEntities());
-                        if (navSettings.isHideFolders() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isHideFolders())
-                            JSONUtils.field(json, "hideFolders", navSettings.isHideFolders());
-                        if (navSettings.isHideSchemas() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isHideSchemas())
-                            JSONUtils.field(json, "hideSchemas", navSettings.isHideSchemas());
-                        if (navSettings.isHideVirtualModel() != CBAppConfig.DEFAULT_VIEW_SETTINGS.isHideVirtualModel())
-                            JSONUtils.field(json, "hideVirtualModel", navSettings.isHideVirtualModel());
-
-                        json.endObject();
-                    }
-                    if (appConfig.getEnabledFeatures() != null) {
-                        JSONUtils.serializeStringList(json, "enabledFeatures", Arrays.asList(appConfig.getEnabledFeatures()), true);
-                    }
-                    if (appConfig.getEnabledAuthProviders() != null) {
-                        JSONUtils.serializeStringList(json, "enabledAuthProviders", Arrays.asList(appConfig.getEnabledAuthProviders()), true);
-                    }
-                    if (appConfig.getEnabledDrivers() != null) {
-                        JSONUtils.serializeStringList(json, "enabledDrivers", Arrays.asList(appConfig.getEnabledDrivers()), true);
-                    }
-                    if (appConfig.getDisabledDrivers() != null) {
-                        JSONUtils.serializeStringList(json, "disabledDrivers", Arrays.asList(appConfig.getDisabledDrivers()), true);
-                    }
-
-                    if (!CommonUtils.isEmpty(appConfig.getPlugins())) {
-                        JSONUtils.serializeProperties(json, "plugins", appConfig.getPlugins());
-                    }
-                    if (!CommonUtils.isEmpty(appConfig.getAuthProviderConfigurations())) {
-                        json.name("authConfiguration");
-                        gson.toJson(appConfig.getAuthProviderConfigurations(), Map.class, json);
-                    }
-
-
-                    json.endObject();
-                }
-                json.endObject();
+            if (permissionsConfiguration == null) {
+                return;
             }
-
-        } catch (IOException e) {
-            throw new DBException("Error writing runtime configuration", e);
+            for (var entry : permissionsConfiguration.entrySet()) {
+                var dataSourceId = entry.getKey();
+                var ds = globalRegistry.getDataSource(dataSourceId);
+                if (ds == null) {
+                    log.error("Connection " + dataSourceId + " is not found in project " + globalRegistry.getProject()
+                        .getName());
+                }
+                List<String> permissions = JSONUtils.getStringList(permissionsConfiguration, dataSourceId);
+                var securityController = getSecurityController();
+                securityController.deleteAllObjectPermissions(dataSourceId, SMObjectType.datasource);
+                securityController.setObjectPermissions(
+                    Set.of(dataSourceId),
+                    SMObjectType.datasource,
+                    new HashSet<>(permissions),
+                    Set.of(SMConstants.DATA_SOURCE_ACCESS_PERMISSION),
+                    CBConstants.ADMIN_AUTO_GRANT
+                );
+            }
+        } catch (DBException e) {
+            log.error("Error granting permissions to connections", e);
         }
     }
 
     ////////////////////////////////////////////////////////////////////////
     // License management
 
+    @Override
     public boolean isLicenseRequired() {
         return false;
     }
@@ -851,28 +660,90 @@ public class CBApplication extends BaseWebApplication {
         return false;
     }
 
-    /**
-     *
-     */
-    public String getStaticContent() {
-        return staticContent;
+    @Nullable
+    public String getLicenseStatus() {
+        return null;
     }
 
-    ////////////////////////////////////////////////////////////////////////
-    // Configuration utils
+    public WebSessionManager getSessionManager() {
+        if (sessionManager == null) {
+            sessionManager = createSessionManager();
+        }
+        return sessionManager;
+    }
 
-    private void patchConfigurationWithProperties(Map<String, Object> configProps) {
-        IVariableResolver varResolver = new SystemVariablesResolver() {
-            @Override
-            public String get(String name) {
-                String propValue = externalProperties.get(name);
-                if (propValue != null) {
-                    return propValue;
-                }
-                return super.get(name);
+    protected WebSessionManager createSessionManager() {
+        return new WebSessionManager(this);
+    }
+
+    @NotNull
+    public WebDriverRegistry getDriverRegistry() {
+        return WebDriverRegistry.getInstance();
+    }
+
+    public List<String> getAvailableAuthRoles() {
+        return List.of();
+    }
+
+    @Override
+    public WSEventController getEventController() {
+        return eventController;
+    }
+
+    @Nullable
+    public String getDefaultAuthRole() {
+        return null;
+    }
+
+    public String getContainerId() {
+        if (containerId == null) {
+            containerId = System.getenv("HOSTNAME");
+        }
+        return containerId;
+    }
+
+    @NotNull
+    @Override
+    public Class<? extends DBPPlatform> getPlatformClass() {
+        return CBPlatform.class;
+    }
+
+    @Override
+    public Class<? extends DBPPlatformUI> getPlatformUIClass() {
+        return CBPlatformUI.class;
+    }
+
+    public void saveProductConfiguration(SMCredentialsProvider credentialsProvider, Map<String, Object> productConfiguration) throws DBException {
+        getServerConfigurationController().saveProductConfiguration(productConfiguration);
+        flushConfiguration(credentialsProvider);
+        sendConfigChangedEvent(credentialsProvider);
+    }
+
+    protected void sendConfigChangedEvent(SMCredentialsProvider credentialsProvider) {
+        String sessionId = null;
+        if (credentialsProvider != null && credentialsProvider.getActiveUserCredentials() != null) {
+            sessionId = credentialsProvider.getActiveUserCredentials().getSmSessionId();
+        }
+        eventController.addEvent(new WSServerConfigurationChangedEvent(sessionId, null));
+    }
+
+    @Override
+    public abstract CBServerConfigurationController<T> getServerConfigurationController();
+
+    private void refreshDisabledDriversConfig() {
+        CBAppConfig config = getAppConfiguration();
+        Set<String> disabledDrivers = new LinkedHashSet<>(Arrays.asList(config.getDisabledDrivers()));
+        for (DBPDriver driver : CBPlatform.getInstance().getApplicableDrivers()) {
+            if (!driver.isEmbedded() || config.isDriverForceEnabled(driver.getFullId())) {
+                continue;
             }
-        };
-        patchConfigurationWithProperties(configProps, varResolver);
+            disabledDrivers.add(driver.getFullId());
+        }
+        config.setDisabledDrivers(disabledDrivers.toArray(new String[0]));
     }
 
+    @Override
+    public boolean isEnvironmentVariablesAccessible() {
+        return getAppConfiguration().isSystemVariablesResolvingEnabled();
+    }
 }

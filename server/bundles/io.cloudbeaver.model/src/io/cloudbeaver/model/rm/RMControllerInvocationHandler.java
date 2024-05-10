@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.model.rm.RMController;
 
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 public class RMControllerInvocationHandler implements InvocationHandler {
@@ -40,7 +41,11 @@ public class RMControllerInvocationHandler implements InvocationHandler {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        checkIsRmEnabled();
-        return method.invoke(rmController, args);
+        try {
+            checkIsRmEnabled();
+            return method.invoke(rmController, args);
+        } catch (InvocationTargetException e) {
+            throw e.getCause();
+        }
     }
 }

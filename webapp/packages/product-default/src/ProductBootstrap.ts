@@ -1,29 +1,23 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
+import { importLazyComponent } from '@cloudbeaver/core-blocks';
 import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 import { VersionUpdateService } from '@cloudbeaver/core-version-update';
 
-import { UpdateInstruction } from './UpdateInstruction';
+const UpdateInstruction = importLazyComponent(() => import('./UpdateInstruction').then(m => m.UpdateInstruction));
 
 @injectable()
 export class ProductBootstrap extends Bootstrap {
-  constructor(
-    private readonly versionUpdateService: VersionUpdateService
-  ) {
+  constructor(private readonly versionUpdateService: VersionUpdateService) {
     super();
   }
 
-  async load() { }
-
   register() {
-    this.versionUpdateService.registerInstruction(
-      () => UpdateInstruction
-    );
+    this.versionUpdateService.registerVersionInstruction(() => UpdateInstruction);
   }
 }

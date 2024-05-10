@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,20 +23,28 @@ import io.cloudbeaver.model.WebConnectionConfig;
 import io.cloudbeaver.model.WebNetworkHandlerConfigInput;
 import io.cloudbeaver.model.session.WebActionParameters;
 import io.cloudbeaver.model.session.WebSession;
+import io.cloudbeaver.registry.WebAuthProviderDescriptor;
+import io.cloudbeaver.registry.WebAuthProviderRegistry;
+import io.cloudbeaver.server.CBAppConfig;
 import io.cloudbeaver.server.CBApplication;
+import io.cloudbeaver.utils.WebAppUtils;
 import io.cloudbeaver.utils.WebCommonUtils;
+import io.cloudbeaver.utils.WebDataSourceUtils;
 import org.jkiss.code.NotNull;
 import org.jkiss.code.Nullable;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.DBPDataSourceContainer;
 import org.jkiss.dbeaver.model.access.DBAAuthCredentials;
 import org.jkiss.dbeaver.model.app.DBPDataSourceRegistry;
+import org.jkiss.dbeaver.model.app.DBPProject;
 import org.jkiss.dbeaver.model.connection.DBPConnectionConfiguration;
 import org.jkiss.dbeaver.model.connection.DBPDriver;
+import org.jkiss.dbeaver.model.impl.auth.AuthModelDatabaseNativeCredentials;
 import org.jkiss.dbeaver.model.navigator.DBNBrowseSettings;
 import org.jkiss.dbeaver.model.navigator.DBNModel;
+import org.jkiss.dbeaver.model.navigator.DBNProject;
 import org.jkiss.dbeaver.model.net.DBWHandlerConfiguration;
-import org.jkiss.dbeaver.model.net.ssh.SSHConstants;
+import org.jkiss.dbeaver.model.rm.RMProjectType;
 import org.jkiss.dbeaver.registry.DataSourceDescriptor;
 import org.jkiss.dbeaver.registry.DataSourceNavigatorSettings;
 import org.jkiss.dbeaver.registry.DataSourceProviderDescriptor;
@@ -44,16 +52,10 @@ import org.jkiss.dbeaver.registry.DataSourceProviderRegistry;
 import org.jkiss.dbeaver.registry.driver.DriverDescriptor;
 import org.jkiss.dbeaver.registry.network.NetworkHandlerDescriptor;
 import org.jkiss.dbeaver.registry.network.NetworkHandlerRegistry;
-import org.jkiss.dbeaver.runtime.DBWorkbench;
 import org.jkiss.utils.CommonUtils;
 
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import java.io.InputStream;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Various constants
@@ -85,16 +87,11 @@ public class WebServiceUtils extends WebCommonUtils {
 
     @NotNull
     public static DBPDataSourceRegistry getGlobalDataSourceRegistry() throws DBWebException {
-        DBPDataSourceRegistry registry = DBWorkbench.getPlatform().getWorkspace().getDefaultDataSourceRegistry();
-        if (registry == null) {
-            throw new DBWebException("No activate data source registry");
-        }
-        return registry;
+        return WebDataSourceUtils.getGlobalDataSourceRegistry();
     }
 
-    @NotNull
-    public static DBNModel getGlobalNavigatorModel() throws DBWebException {
-        return DBWorkbench.getPlatform().getNavigatorModel();
+    public static DBPDataSourceRegistry getGlobalRegistry(WebSession session) {
+        return session.getProjectById(WebAppUtils.getGlobalProjectId()).getDataSourceRegistry();
     }
 
     public static InputStream openStaticResource(String path) {
@@ -129,6 +126,9 @@ public class WebServiceUtils extends WebCommonUtils {
         newDataSource.setSavePassword(true);
         newDataSource.setName(config.getName());
         newDataSource.setDescription(config.getDescription());
+        if (config.getFolder() != null) {
+            newDataSource.setFolder(registry.getFolder(config.getFolder()));
+        }
         ((DataSourceDescriptor)newDataSource).setTemplate(config.isTemplate());
 
         // Set default navigator settings
@@ -137,7 +137,13 @@ public class WebServiceUtils extends WebCommonUtils {
         //navSettings.setShowSystemObjects(false);
         ((DataSourceDescriptor)newDataSource).setNavigatorSettings(navSettings);
 
-        saveAuthProperties(newDataSource, newDataSource.getConnectionConfiguration(), config.getCredentials(), config.isSaveCredentials());
+        saveAuthProperties(
+            newDataSource,
+            newDataSource.getConnectionConfiguration(),
+            config.getCredentials(),
+            config.isSaveCredentials(),
+            config.isSharedCredentials()
+        );
 
 
         return newDataSource;
@@ -159,7 +165,6 @@ public class WebServiceUtils extends WebCommonUtils {
             if (config.getServerName() != null) {
                 dsConfig.setServerName(config.getServerName());
             }
-            dsConfig.setUrl(driver.getConnectionURL(dsConfig));
         }
         if (config.getProperties() != null) {
             Map<String, String> newProps = new LinkedHashMap<>();
@@ -177,12 +182,21 @@ public class WebServiceUtils extends WebCommonUtils {
         if (config.getAuthModelId() != null) {
             dsConfig.setAuthModelId(config.getAuthModelId());
         }
+        if (config.getKeepAliveInterval() >= 0) {
+            dsConfig.setKeepAliveInterval(config.getKeepAliveInterval());
+        }
         // Save provider props
         if (config.getProviderProperties() != null) {
             dsConfig.setProviderProperties(new LinkedHashMap<>());
             for (Map.Entry<String, Object> e : config.getProviderProperties().entrySet()) {
                 dsConfig.setProviderProperty(e.getKey(), CommonUtils.toString(e.getValue()));
             }
+        }
+        if (config.getConfigurationType() != null) {
+            dsConfig.setConfigurationType(config.getConfigurationType());
+        }
+        if (CommonUtils.isEmpty(config.getUrl())) {
+            dsConfig.setUrl(driver.getConnectionURL(dsConfig));
         }
         // Save network handlers
         if (config.getNetworkHandlersConfig() != null) {
@@ -195,41 +209,13 @@ public class WebServiceUtils extends WebCommonUtils {
                         continue;
                     } else {
                         handlerConfig = new DBWHandlerConfiguration(handlerDescriptor, null);
-                        updateHandlerConfig(handlerConfig, nhc);
+                        WebDataSourceUtils.updateHandlerConfig(handlerConfig, nhc);
                     }
                 } else {
-                    updateHandlerConfig(handlerConfig, nhc);
+                    WebDataSourceUtils.updateHandlerConfig(handlerConfig, nhc);
                 }
                 dsConfig.updateHandler(handlerConfig);
             }
-        }
-    }
-
-    public static void updateHandlerConfig(DBWHandlerConfiguration handlerConfig, WebNetworkHandlerConfigInput cfgInput) {
-        if (cfgInput.isEnabled() != null) {
-            handlerConfig.setEnabled(cfgInput.isEnabled());
-        }
-        if (cfgInput.getProperties() != null) {
-            handlerConfig.setProperties(cfgInput.getProperties());
-        }
-
-        if (cfgInput.getAuthType() != null) {
-            handlerConfig.setProperty(SSHConstants.PROP_AUTH_TYPE,
-                CommonUtils.valueOf(SSHConstants.AuthType.class, cfgInput.getAuthType(), SSHConstants.AuthType.PASSWORD));
-        }
-        if (cfgInput.isSavePassword() != null) {
-            handlerConfig.setSavePassword(cfgInput.isSavePassword());
-        } else {
-            handlerConfig.setSavePassword(false);
-        }
-        if (cfgInput.getUserName() != null) {
-            handlerConfig.setUserName(cfgInput.getUserName());
-        }
-        if (cfgInput.getPassword() != null) {
-            handlerConfig.setPassword(cfgInput.getPassword());
-        }
-        if (cfgInput.getKey() != null) {
-            handlerConfig.setSecureProperty(SSHConstants.PROP_KEY_VALUE, cfgInput.getKey());
         }
     }
 
@@ -237,27 +223,47 @@ public class WebServiceUtils extends WebCommonUtils {
         @NotNull DBPDataSourceContainer dataSourceContainer,
         @NotNull DBPConnectionConfiguration configuration,
         @Nullable Map<String, Object> authProperties,
-        boolean saveCredentials)
-    {
+        boolean saveCredentials,
+        boolean sharedCredentials
+    ) {
+        saveAuthProperties(dataSourceContainer, configuration, authProperties, saveCredentials, sharedCredentials, false);
+    }
+
+    public static void saveAuthProperties(
+        @NotNull DBPDataSourceContainer dataSourceContainer,
+        @NotNull DBPConnectionConfiguration configuration,
+        @Nullable Map<String, Object> authProperties,
+        boolean saveCredentials,
+        boolean sharedCredentials,
+        boolean isTest
+    ) {
         dataSourceContainer.setSavePassword(saveCredentials);
+        dataSourceContainer.setSharedCredentials(sharedCredentials);
         if (!saveCredentials) {
             // Reset credentials
             if (authProperties == null) {
                 authProperties = new LinkedHashMap<>();
             }
+            authProperties.replace(AuthModelDatabaseNativeCredentials.PROP_USER_PASSWORD, null);
+            dataSourceContainer.resetPassword();
         } else {
             if (authProperties == null) {
                 // No changes
                 return;
             }
         }
-        if (!saveCredentials) {
-            configuration.setUserPassword(null);
-        }
         {
             // Read save credentials
             DBAAuthCredentials credentials = configuration.getAuthModel().loadCredentials(dataSourceContainer, configuration);
 
+            if (isTest) {
+                var currentAuthProps = new HashMap<String, String>();
+                for (Map.Entry<String, Object> stringObjectEntry : authProperties.entrySet()) {
+                    var value = stringObjectEntry.getValue() == null ? null : stringObjectEntry.getValue().toString();
+                    currentAuthProps.put(stringObjectEntry.getKey(), value);
+                }
+                configuration.setAuthProperties(currentAuthProps);
+            }
             if (!authProperties.isEmpty()) {
 
                 // Make new Gson parser with type adapters to deserialize into existing credentials
@@ -274,13 +280,6 @@ public class WebServiceUtils extends WebCommonUtils {
         }
     }
 
-    public static void updateConnectionFromConfig(DBPDataSourceContainer dataSource, WebConnectionConfig config) {
-        setConnectionConfiguration(dataSource.getDriver(), dataSource.getConnectionConfiguration(), config);
-        dataSource.setName(config.getName());
-        dataSource.setDescription(config.getDescription());
-        saveAuthProperties(dataSource, dataSource.getConnectionConfiguration(), config.getCredentials(), config.isSaveCredentials());
-    }
-
     public static DBNBrowseSettings parseNavigatorSettings(Map<String, Object> settingsMap) {
         return gson.fromJson(
             gson.toJsonTree(settingsMap), DataSourceNavigatorSettings.class);
@@ -292,71 +291,44 @@ public class WebServiceUtils extends WebCommonUtils {
         }
     }
 
-    public static void addResponseCookie(HttpServletRequest request, HttpServletResponse response, String cookieName, String cookieValue, long maxSessionIdleTime) {
-        addResponseCookie(request, response, cookieName, cookieValue, maxSessionIdleTime, null);
-    }
-
-    public static void addResponseCookie(HttpServletRequest request, HttpServletResponse response, String cookieName, String cookieValue, long maxSessionIdleTime, @Nullable String sameSite) {
-        Cookie sessionCookie = new Cookie(cookieName, cookieValue);
-        if (maxSessionIdleTime > 0) {
-            sessionCookie.setMaxAge((int) (maxSessionIdleTime / 1000));
-        }
-
-        String path = CBApplication.getInstance().getRootURI();
-
-        if (sameSite != null) {
-            if (sameSite.toLowerCase() == "none" && request.isSecure() == false) {
-                log.debug("Attempt to set Cookie `" + cookieName + "` with `SameSite=None` failed, it require a secure context/HTTPS");
-            } else {
-                sessionCookie.setSecure(true);
-                path = path.concat("; SameSite=" + sameSite);
-            }
-        }
-
-        sessionCookie.setPath(path);
-        response.addCookie(sessionCookie);
-    }
-
-    public static String getRequestCookie(HttpServletRequest request, String cookieName) {
-        for (Cookie cookie : request.getCookies()) {
-            if (cookie.getName().equals(cookieName)) {
-                return cookie.getValue();
-            }
-        }
-        return null;
-    }
-
-    @NotNull
-    public static String removeSideSlashes(String action) {
-        if (CommonUtils.isEmpty(action)) {
-            return action;
-        }
-        while (action.startsWith("/")) action = action.substring(1);
-        while (action.endsWith("/")) action = action.substring(0, action.length() - 1);
-        return action;
-    }
-
-    @NotNull
-    public static StringBuilder getApiPrefix(String serviceId) {
-        CBApplication application = CBApplication.getInstance();
-        StringBuilder apiPrefix = new StringBuilder();
-        apiPrefix.append(removeSideSlashes(application.getServerURL()));
-        apiPrefix.append("/");
-        String rootURI = removeSideSlashes(application.getRootURI());
-        if (!CommonUtils.isEmpty(rootURI)) {
-            apiPrefix.append(rootURI).append("/");
-        }
-        apiPrefix.append(removeSideSlashes(application.getServicesURI()));
-        apiPrefix.append("/").append(serviceId).append("/");
-        return apiPrefix;
-    }
-
-    public static void fireActionParametersOpenEditor(WebSession webSession, DBPDataSourceContainer dataSource) {
+    public static void fireActionParametersOpenEditor(WebSession webSession, DBPDataSourceContainer dataSource, boolean addEditorName) {
         Map<String, Object> actionParameters = new HashMap<>();
         actionParameters.put("action", "open-sql-editor");
         actionParameters.put("connection-id", dataSource.getId());
-        actionParameters.put("editor-name", dataSource.getName() + "-sql");
+        actionParameters.put("project-id", dataSource.getProject().getId());
+        if (addEditorName) {
+            actionParameters.put("editor-name", dataSource.getName() + "-sql");
+        }
         WebActionParameters.saveToSession(webSession, actionParameters);
+    }
+
+    public static String getConnectionContainerInfo(DBPDataSourceContainer container) {
+        if (container == null) {
+            return null;
+        }
+        return container.getName() + " [" + container.getId() + "]";
+    }
+
+    public static void updateConfigAndRefreshDatabases(WebSession session, String projectId) {
+        DBNProject projectNode = session.getNavigatorModel().getRoot().getProjectNode(session.getProjectById(projectId));
+        DBNModel.updateConfigAndRefreshDatabases(projectNode.getDatabases());
+    }
+
+    public static boolean isGlobalProject(DBPProject project) {
+        return project.getId().equals(RMProjectType.GLOBAL.getPrefix() + "_" + CBApplication.getInstance().getDefaultProjectName());
+    }
+
+    public static List<WebAuthProviderDescriptor> getEnabledAuthProviders() {
+        List<WebAuthProviderDescriptor> result = new ArrayList<>();
+        CBAppConfig appConfig = CBApplication.getInstance().getAppConfiguration();
+        String[] authProviders = appConfig.getEnabledAuthProviders();
+        for (String apId : authProviders) {
+            WebAuthProviderDescriptor authProvider = WebAuthProviderRegistry.getInstance().getAuthProvider(apId);
+            if (authProvider != null) {
+                result.add(authProvider);
+            }
+        }
+        return result;
     }
 
 }

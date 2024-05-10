@@ -1,27 +1,24 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { observable, makeObservable, action, toJS } from 'mobx';
+import { action, makeObservable, observable, toJS } from 'mobx';
 
 import type { IConnectionExecutionContext } from '@cloudbeaver/core-connections';
 import type { IServiceInjector } from '@cloudbeaver/core-di';
+import { ITask, Task } from '@cloudbeaver/core-executor';
 import { ResultDataFormat } from '@cloudbeaver/core-sdk';
 
 import { DatabaseDataActions } from './DatabaseDataActions';
 import type { IDatabaseDataAction, IDatabaseDataActionClass, IDatabaseDataActionInterface } from './IDatabaseDataAction';
 import type { IDatabaseDataActions } from './IDatabaseDataActions';
-import type { IDatabaseDataManager } from './IDatabaseDataManager';
 import type { IDatabaseDataResult } from './IDatabaseDataResult';
 import { DatabaseDataAccessMode, IDatabaseDataSource, IRequestInfo } from './IDatabaseDataSource';
 
-export abstract class DatabaseDataSource<TOptions, TResult extends IDatabaseDataResult>
-implements IDatabaseDataSource<TOptions, TResult> {
-  abstract readonly dataManager: IDatabaseDataManager;
+export abstract class DatabaseDataSource<TOptions, TResult extends IDatabaseDataResult> implements IDatabaseDataSource<TOptions, TResult> {
   access: DatabaseDataAccessMode;
   dataFormat: ResultDataFormat;
   supportedDataFormats: ResultDataFormat[];
@@ -35,8 +32,24 @@ implements IDatabaseDataSource<TOptions, TResult> {
   requestInfo: IRequestInfo;
   error: Error | null;
   executionContext: IConnectionExecutionContext | null;
+  outdated: boolean;
+  totalCountRequestTask: ITask<number> | null;
 
-  abstract get canCancel(): boolean;
+  get canCancel(): boolean {
+    if (this.activeTask instanceof Task) {
+      return this.activeTask.cancellable;
+    }
+
+    return false;
+  }
+
+  get cancelled(): boolean {
+    if (this.activeTask instanceof Task) {
+      return this.activeTask.cancelled;
+    }
+
+    return false;
+  }
 
   readonly serviceInjector: IServiceInjector;
   protected disabled: boolean;
@@ -47,6 +60,7 @@ implements IDatabaseDataSource<TOptions, TResult> {
 
   constructor(serviceInjector: IServiceInjector) {
     this.serviceInjector = serviceInjector;
+    this.totalCountRequestTask = null;
     this.actions = new DatabaseDataActions(this);
     this.access = DatabaseDataAccessMode.Default;
     this.results = [];
@@ -55,6 +69,7 @@ implements IDatabaseDataSource<TOptions, TResult> {
     this.prevOptions = null;
     this.options = null;
     this.disabled = false;
+    this.outdated = false;
     this.constraintsAvailable = true;
     this.activeRequest = null;
     this.activeSave = null;
@@ -63,6 +78,7 @@ implements IDatabaseDataSource<TOptions, TResult> {
     this.dataFormat = ResultDataFormat.Resultset;
     this.supportedDataFormats = [];
     this.requestInfo = {
+      originalQuery: '',
       requestDuration: 0,
       requestMessage: '',
       requestFilter: '',
@@ -81,6 +97,7 @@ implements IDatabaseDataSource<TOptions, TResult> {
       prevOptions: observable,
       options: observable,
       requestInfo: observable,
+      totalCountRequestTask: observable.ref,
       error: observable.ref,
       executionContext: observable,
       disabled: observable,
@@ -88,22 +105,24 @@ implements IDatabaseDataSource<TOptions, TResult> {
       activeRequest: observable.ref,
       activeSave: observable.ref,
       activeTask: observable.ref,
+      outdated: observable.ref,
       setResults: action,
       setSupportedDataFormats: action,
+      resetData: action,
     });
   }
 
   tryGetAction<T extends IDatabaseDataAction<TOptions, TResult>>(
     resultIndex: number,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
+    action: IDatabaseDataActionClass<TOptions, TResult, T>,
   ): T | undefined;
   tryGetAction<T extends IDatabaseDataAction<TOptions, TResult>>(
     result: TResult,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
+    action: IDatabaseDataActionClass<TOptions, TResult, T>,
   ): T | undefined;
   tryGetAction<T extends IDatabaseDataAction<TOptions, TResult>>(
     resultIndex: number | TResult,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
+    action: IDatabaseDataActionClass<TOptions, TResult, T>,
   ): T | undefined {
     if (typeof resultIndex === 'number') {
       if (!this.hasResult(resultIndex)) {
@@ -115,17 +134,11 @@ implements IDatabaseDataSource<TOptions, TResult> {
     return this.actions.tryGet(resultIndex, action);
   }
 
-  getAction<T extends IDatabaseDataAction<TOptions, TResult>>(
-    resultIndex: number,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
-  ): T;
-  getAction<T extends IDatabaseDataAction<TOptions, TResult>>(
-    result: TResult,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
-  ): T;
+  getAction<T extends IDatabaseDataAction<TOptions, TResult>>(resultIndex: number, action: IDatabaseDataActionClass<TOptions, TResult, T>): T;
+  getAction<T extends IDatabaseDataAction<TOptions, TResult>>(result: TResult, action: IDatabaseDataActionClass<TOptions, TResult, T>): T;
   getAction<T extends IDatabaseDataAction<TOptions, TResult>>(
     resultIndex: number | TResult,
-    action: IDatabaseDataActionClass<TOptions, TResult, T>
+    action: IDatabaseDataActionClass<TOptions, TResult, T>,
   ): T {
     if (typeof resultIndex === 'number') {
       if (!this.hasResult(resultIndex)) {
@@ -139,15 +152,15 @@ implements IDatabaseDataSource<TOptions, TResult> {
 
   getActionImplementation<T extends IDatabaseDataAction<TOptions, TResult>>(
     resultIndex: number,
-    action: IDatabaseDataActionInterface<TOptions, TResult, T>
+    action: IDatabaseDataActionInterface<TOptions, TResult, T>,
   ): T | undefined;
   getActionImplementation<T extends IDatabaseDataAction<TOptions, TResult>>(
     result: TResult,
-    action: IDatabaseDataActionInterface<TOptions, TResult, T>
+    action: IDatabaseDataActionInterface<TOptions, TResult, T>,
   ): T | undefined;
   getActionImplementation<T extends IDatabaseDataAction<TOptions, TResult>>(
     resultIndex: number | TResult,
-    action: IDatabaseDataActionInterface<TOptions, TResult, T>
+    action: IDatabaseDataActionInterface<TOptions, TResult, T>,
   ): T | undefined {
     if (typeof resultIndex === 'number') {
       if (!this.hasResult(resultIndex)) {
@@ -159,7 +172,11 @@ implements IDatabaseDataSource<TOptions, TResult> {
     return this.actions.getImplementation(resultIndex, action);
   }
 
-  abstract cancel(): Promise<void> | void;
+  async cancel() {
+    if (this.activeTask instanceof Task) {
+      await this.activeTask.cancel();
+    }
+  }
 
   hasResult(resultIndex: number): boolean {
     return resultIndex < this.results.length;
@@ -173,18 +190,24 @@ implements IDatabaseDataSource<TOptions, TResult> {
     return null;
   }
 
-  setResults(results: TResult[]): this {
-    this.actions.updateResults(results);
-    this.results = results;
-    this.dataManager.clearCache();
+  setOutdated(): this {
+    this.outdated = true;
     return this;
   }
 
-  isReadonly(): boolean {
-    return this.access === DatabaseDataAccessMode.Readonly
-      || this.results.length > 1
-      || !this.executionContext?.context
-      || this.disabled;
+  setResults(results: TResult[]): this {
+    results = observable(results);
+    this.actions.updateResults(results);
+    this.results = results;
+    return this;
+  }
+
+  isLoadable(): boolean {
+    return !this.isLoading() && !this.disabled;
+  }
+
+  isReadonly(resultIndex: number): boolean {
+    return this.access === DatabaseDataAccessMode.Readonly || this.results.length > 1 || !this.executionContext?.context || this.disabled;
   }
 
   isLoading(): boolean {
@@ -235,6 +258,15 @@ implements IDatabaseDataSource<TOptions, TResult> {
     return this;
   }
 
+  setTotalCount(resultIndex: number, count: number): this {
+    const result = this.getResult(resultIndex);
+
+    if (result) {
+      result.totalCount = count;
+    }
+    return this;
+  }
+
   async retry(): Promise<void> {
     await this.lastAction();
   }
@@ -243,19 +275,19 @@ implements IDatabaseDataSource<TOptions, TResult> {
     if (this.activeTask) {
       try {
         await this.activeTask;
-      } catch { }
+      } catch {}
     }
 
     if (this.activeSave) {
       try {
         await this.activeSave;
-      } catch { }
+      } catch {}
     }
 
     if (this.activeRequest) {
       try {
         await this.activeRequest;
-      } catch { }
+      } catch {}
     }
 
     this.activeTask = task();
@@ -271,7 +303,8 @@ implements IDatabaseDataSource<TOptions, TResult> {
     if (this.activeSave) {
       try {
         await this.activeSave;
-      } finally { }
+      } finally {
+      }
     }
 
     if (this.activeRequest) {
@@ -284,6 +317,7 @@ implements IDatabaseDataSource<TOptions, TResult> {
       this.activeRequest = this.requestDataAction();
 
       const data = await this.activeRequest;
+      this.outdated = false;
 
       if (data !== null) {
         this.setResults(data);
@@ -304,7 +338,8 @@ implements IDatabaseDataSource<TOptions, TResult> {
     if (this.activeRequest) {
       try {
         await this.activeRequest;
-      } finally { }
+      } finally {
+      }
     }
 
     if (this.activeSave) {
@@ -325,21 +360,28 @@ implements IDatabaseDataSource<TOptions, TResult> {
     }
   }
 
-  clearError(): void {
+  clearError(): this {
     this.error = null;
+    return this;
   }
 
-  resetData(): void {
-    if (this.activeSave || this.activeRequest) {
-      return;
-    }
+  resetData(): this {
+    this.clearError();
     this.setResults([]);
+    this.setOutdated();
+    return this;
+  }
+
+  async dispose(): Promise<void> {
+    await this.cancel();
+    await this.executionContext?.destroy();
   }
 
   abstract request(prevResults: TResult[]): TResult[] | Promise<TResult[]>;
   abstract save(prevResults: TResult[]): Promise<TResult[]> | TResult[];
 
-  abstract dispose(): Promise<void>;
+  abstract loadTotalCount(resultIndex: number): Promise<ITask<number>>;
+  abstract cancelLoadTotalCount(): Promise<ITask<number> | null>;
 
   async requestDataAction(): Promise<TResult[] | null> {
     this.prevOptions = toJS(this.options);

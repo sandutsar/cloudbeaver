@@ -1,12 +1,12 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import path from 'path';
+import { isValidUrl } from './isValidUrl';
+import { pathJoin } from './pathJoin';
 
 declare const _VERSION_: string | undefined;
 declare const _DEV_: boolean | undefined;
@@ -21,25 +21,55 @@ export const GlobalConstants = {
     return _VERSION_;
   },
 
+  get protocol(): 'http:' | 'https:' {
+    return window.location.protocol as 'http:' | 'https:';
+  },
+
+  get wsProtocol(): 'ws:' | 'wss:' {
+    return this.protocol === 'https:' ? 'wss:' : 'ws:';
+  },
+
+  get host(): string {
+    return window.location.host;
+  },
+
   get rootURI(): string {
     const defaultURI = '/';
 
     if (_ROOT_URI_ === '{ROOT_URI}') {
       return defaultURI;
     }
-    return path.join(_ROOT_URI_ ?? defaultURI, '/');
+
+    if (_ROOT_URI_ && isValidUrl(_ROOT_URI_)) {
+      const url = new URL(_ROOT_URI_);
+      return url.pathname;
+    }
+
+    return pathJoin(_ROOT_URI_ ?? defaultURI, '/');
   },
 
   get serviceURI(): string {
-    return path.join(this.rootURI, 'api');
+    return pathJoin(this.rootURI, 'api');
+  },
+
+  getHealthCheckUrl(host: string): string {
+    return `${host}/status`;
   },
 
   absoluteRootUrl(...parts: string[]): string {
-    return path.join(this.rootURI, ...parts);
+    return pathJoin(this.rootURI, ...parts);
   },
 
   absoluteServiceUrl(...parts: string[]): string {
-    return path.join(this.serviceURI, ...parts);
+    return pathJoin(this.serviceURI, ...parts);
+  },
+
+  absoluteServiceHTTPUrl(...parts: string[]): string {
+    return `${this.protocol}//${pathJoin(this.host, this.absoluteServiceUrl(...parts))}`;
+  },
+
+  absoluteServiceWSUrl(...parts: string[]): string {
+    return `${this.wsProtocol}//${pathJoin(this.host, this.absoluteServiceUrl(...parts))}`;
   },
 
   absoluteUrl(...parts: string[]): string {

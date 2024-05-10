@@ -1,24 +1,22 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { injectable } from '@cloudbeaver/core-di';
-import { SessionResource } from '@cloudbeaver/core-root';
-import type { AuthProviderConfiguration, UserInfo } from '@cloudbeaver/core-sdk';
-import { openCenteredPopup } from '@cloudbeaver/core-utils';
+import { AutoRunningTask, type ITask } from '@cloudbeaver/core-executor';
+import { WindowsService } from '@cloudbeaver/core-routing';
+import { AuthInfo, AuthStatus, UserInfo } from '@cloudbeaver/core-sdk';
+import { uuid } from '@cloudbeaver/core-utils';
 
-import { AuthProvidersResource } from './AuthProvidersResource';
-import type { IAuthCredentials } from './IAuthCredentials';
-import { UserInfoResource } from './UserInfoResource';
+import { AuthProviderConfiguration, AuthProvidersResource } from './AuthProvidersResource';
+import { type ILoginOptions, UserInfoResource } from './UserInfoResource';
 
-interface IActiveSSOAuthentication {
+export interface IUserAuthConfiguration {
+  providerId: string;
   configuration: AuthProviderConfiguration;
-  window: Window;
-  promise: Promise<UserInfo | null>;
 }
 
 @injectable()
@@ -27,103 +25,61 @@ export class AuthInfoService {
     return this.userInfoResource.data;
   }
 
-  get userAuthConfigurations(): AuthProviderConfiguration[] {
-    const tokens = this.userInfo?.authTokens;
-    const result: AuthProviderConfiguration[] = [];
-
-    if (!tokens) {
-      return result;
-    }
-
-    for (const token of tokens) {
-      if (token.authConfiguration) {
-        const provider = this.authProvidersResource.values.find(
-          provider => provider.id === token.authProvider
-        );
-
-        if (provider) {
-          const configuration = provider.configurations?.find(
-            configuration => configuration.id === token.authConfiguration
-          );
-
-          if (configuration) {
-            result.push(configuration);
-          }
-        }
-      }
-    }
-
-    return result;
-  }
-
-  private readonly activeSSO: Map<string, IActiveSSOAuthentication>;
-
   constructor(
     private readonly userInfoResource: UserInfoResource,
     private readonly authProvidersResource: AuthProvidersResource,
-    private readonly sessionResource: SessionResource
-  ) {
-    this.activeSSO = new Map();
+    private readonly windowsService: WindowsService,
+  ) {}
+
+  login(providerId: string, options: ILoginOptions): ITask<UserInfo | null> {
+    return new AutoRunningTask(async () => await this.userInfoResource.login(providerId, options)).then(authInfo =>
+      this.federatedAuthentication(providerId, options, authInfo),
+    );
   }
 
-  async login(provider: string, credentials: IAuthCredentials, link?: boolean): Promise<UserInfo | null> {
-    return this.userInfoResource.login(provider, credentials, link);
-  }
+  private federatedAuthentication(
+    providerId: string,
+    options: ILoginOptions,
+    { redirectLink, authId, authStatus }: AuthInfo,
+  ): ITask<UserInfo | null> {
+    let window: Window | null = null;
+    let id = providerId;
 
-  async sso(providerId: string, configuration: AuthProviderConfiguration): Promise<UserInfo | null> {
-    return this.ssoAuth(providerId, configuration);
-  }
+    if (options.configurationId) {
+      const configuration = this.authProvidersResource.getConfiguration(providerId, options.configurationId);
 
-  async logout(): Promise<void> {
-    await this.userInfoResource.logout();
-  }
-
-  private async ssoAuth(providerId: string, configuration: AuthProviderConfiguration): Promise<UserInfo | null> {
-    const active = this.activeSSO.get(configuration.id);
-
-    if (active) {
-      active.window.focus();
-      return active.promise;
-    }
-
-    const popup = openCenteredPopup(configuration.signInLink, configuration.id, 600, 700, undefined);
-
-    if (popup) {
-      popup.focus();
-
-      const task = async () => {
-        await this.waitWindowsClose(popup);
-
-        this.sessionResource.markOutdated();
-        const user = await this.userInfoResource.load(undefined, []);
-
-        return user;
-      };
-
-      const active: IActiveSSOAuthentication = {
-        configuration,
-        promise: task(),
-        window: popup,
-      };
-
-      this.activeSSO.set(configuration.id, active);
-      try {
-        return await active.promise;
-      } finally {
-        this.activeSSO.delete(configuration.id);
+      if (configuration) {
+        id = configuration.id;
       }
     }
 
-    return Promise.resolve(null);
-  }
+    if (redirectLink) {
+      id = uuid();
+      window = this.windowsService.open(id, {
+        url: redirectLink,
+        target: id,
+        width: 600,
+        height: 700,
+      });
 
-  private async waitWindowsClose(window: Window): Promise<void> {
-    return new Promise(resolve => {
-      setInterval(() => {
-        if (window.closed) {
-          resolve();
+      if (window) {
+        window.focus();
+      }
+    }
+
+    return new AutoRunningTask(
+      () => {
+        if (authId && authStatus === AuthStatus.InProgress) {
+          return this.userInfoResource.finishFederatedAuthentication(authId, options.linkUser);
         }
-      }, 100);
-    });
+
+        return AutoRunningTask.resolve(this.userInfoResource.data);
+      },
+      () => {
+        if (window) {
+          this.windowsService.close(window);
+        }
+      },
+    );
   }
 }

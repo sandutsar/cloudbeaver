@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ import io.cloudbeaver.DBWebException;
 import io.cloudbeaver.model.session.WebSession;
 import io.cloudbeaver.model.user.WebUser;
 import io.cloudbeaver.model.user.WebUserOriginInfo;
+import io.cloudbeaver.registry.WebAuthProviderDescriptor;
+import io.cloudbeaver.registry.WebAuthProviderRegistry;
 import org.jkiss.dbeaver.DBException;
 import org.jkiss.dbeaver.Log;
 import org.jkiss.dbeaver.model.meta.Property;
 import org.jkiss.dbeaver.model.security.SMDataSourceGrant;
-import org.jkiss.dbeaver.model.security.user.SMRole;
-import org.jkiss.dbeaver.registry.auth.AuthProviderDescriptor;
-import org.jkiss.dbeaver.registry.auth.AuthProviderRegistry;
+import org.jkiss.dbeaver.model.security.SMObjectType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +55,11 @@ public class AdminUserInfo {
     }
 
     @Property
+    public String getAuthRole() {
+        return user.getAuthRole();
+    }
+
+    @Property
     public Map<String, String> getMetaParameters() {
         return user.getMetaParameters();
     }
@@ -70,31 +75,35 @@ public class AdminUserInfo {
     }
 
     @Property
-    public String[] getGrantedRoles() throws DBException {
-        if (user.getRoles() == null) {
-            SMRole[] userRoles = session.getSecurityController().getUserRoles(getUserId());
-            user.setRoles(userRoles);
-        }
-        return user.getGrantedRoles();
+    public String[] getGrantedTeams() {
+        return user.getTeams();
     }
 
     @Property
     public SMDataSourceGrant[] getGrantedConnections() throws DBException {
-        return session.getSecurityController().getSubjectConnectionAccess(new String[]{getUserId()});
+        return session.getAdminSecurityController()
+            .getSubjectObjectPermissionGrants(getUserId(), SMObjectType.datasource)
+            .stream()
+            .map(objectPermission -> new SMDataSourceGrant(
+                objectPermission.getObjectPermissions().getObjectId(),
+                getUserId(),
+                objectPermission.getSubjectType()
+            ))
+            .toArray(SMDataSourceGrant[]::new);
     }
 
     @Property
     public WebUserOriginInfo[] getOrigins() throws DBWebException {
-        List<WebUserOriginInfo> result = new ArrayList<>();
+        List<AdminOriginInfo> result = new ArrayList<>();
         for (String provider : getUserLinkedProviders()) {
-            AuthProviderDescriptor authProvider = AuthProviderRegistry.getInstance().getAuthProvider(provider);
+            WebAuthProviderDescriptor authProvider = WebAuthProviderRegistry.getInstance().getAuthProvider(provider);
             if (authProvider == null) {
                 log.error("Auth provider '" + provider + "' not found");
             } else {
-                result.add(new WebUserOriginInfo(session, user, authProvider, false));
+                result.add(new AdminOriginInfo(session, user, authProvider));
             }
         }
-        return result.toArray(new WebUserOriginInfo[0]);
+        return result.toArray(new AdminOriginInfo[0]);
     }
 
     @Property
@@ -106,8 +115,10 @@ public class AdminUserInfo {
         if (userLinkedProviders != null) {
             return userLinkedProviders;
         }
+
         try {
-            userLinkedProviders = session.getSecurityController().getUserLinkedProviders(user.getUserId());
+            String userId = user.getUserId();
+            userLinkedProviders = session.getAdminSecurityController().getUserLinkedProviders(userId);
         } catch (DBException e) {
             throw new DBWebException("Error reading user linked providers", e);
         }

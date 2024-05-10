@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,12 @@ import io.cloudbeaver.WebServiceUtils;
 import io.cloudbeaver.model.WebConnectionInfo;
 import io.cloudbeaver.model.session.WebSession;
 import io.cloudbeaver.server.CBApplication;
-import io.cloudbeaver.server.actions.CBServerAction;
 import io.cloudbeaver.server.actions.AbstractActionSessionHandler;
+import io.cloudbeaver.server.actions.CBServerAction;
 import org.jkiss.dbeaver.DBException;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * LocalSessionHandler
@@ -51,27 +50,22 @@ public class LocalSessionHandler extends AbstractActionSessionHandler {
 
     @Override
     protected void openDatabaseConsole(WebSession webSession, CBServerAction action) throws DBException {
+        String projectId = action.getParameter(LocalServletHandler.PARAM_PROJECT_ID);
         String connectionId = action.getParameter(LocalServletHandler.PARAM_CONNECTION_ID);
         String connectionName = action.getParameter(LocalServletHandler.PARAM_CONNECTION_NAME);
         String connectionURL = action.getParameter(LocalServletHandler.PARAM_CONNECTION_URL);
-        List<WebConnectionInfo> connectionInfoList = webSession.getConnections();
-        WebConnectionInfo connectionInfo = null;
+        Stream<WebConnectionInfo> stream = webSession.getConnections().stream();
+        if (projectId != null) {
+            stream = stream.filter(c -> c.getProjectId().equals(projectId));
+        }
         if (connectionId != null) {
-            connectionInfo = webSession.getWebConnectionInfo(connectionId);
+            stream = stream.filter(c -> c.getId().equals(connectionId));
         } else if (connectionName != null) {
-            List<WebConnectionInfo> filteredConnections = connectionInfoList.stream().filter(t -> t.getName().equals(connectionName)).collect(Collectors.toList());
-            if (filteredConnections.size() == 1) {
-                connectionInfo = webSession.getWebConnectionInfo(filteredConnections.get(0).getId());
-            }
+            stream = stream.filter(t -> t.getName().equals(connectionName));
         } else if (connectionURL != null) {
-            List<WebConnectionInfo> filteredConnections = connectionInfoList.stream().filter(t -> t.getUrl().equals(connectionURL)).collect(Collectors.toList());
-            if (filteredConnections.size() == 1) {
-                connectionInfo = webSession.getWebConnectionInfo(filteredConnections.get(0).getId());
-            }
+            stream = stream.filter(t -> t.getUrl().equals(connectionURL));
         }
-        if (connectionInfo == null) {
-            throw new DBException("Connection info is null");
-        }
-        WebServiceUtils.fireActionParametersOpenEditor(webSession, connectionInfo.getDataSourceContainer());
+        WebConnectionInfo connectionInfo = stream.findFirst().orElseThrow(() -> new DBException("Connection is not found in the session"));
+        WebServiceUtils.fireActionParametersOpenEditor(webSession, connectionInfo.getDataSourceContainer(), false);
     }
 }

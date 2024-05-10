@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import org.jkiss.dbeaver.model.preferences.DBPPropertyDescriptor;
 import org.jkiss.dbeaver.model.struct.*;
 import org.jkiss.dbeaver.model.struct.rdb.DBSCatalog;
 import org.jkiss.dbeaver.model.struct.rdb.DBSSchema;
+import org.jkiss.dbeaver.model.struct.rdb.DBSTable;
 import org.jkiss.dbeaver.runtime.properties.PropertyCollector;
 import org.jkiss.utils.CommonUtils;
 
@@ -48,6 +49,7 @@ public class WebDatabaseObjectInfo {
     public static final String OBJECT_FEATURE_DATA_SOURCE_CONNECTED = "dataSourceConnected";
     public static final String OBJECT_FEATURE_DATA_SOURCE_TEMPORARY = "dataSourceTemporary";
     public static final String OBJECT_FEATURE_ENTITY = "entity";
+    public static final String OBJECT_FEATURE_RELATIONAL_ENTITY = "relationalEntity";
     public static final String OBJECT_FEATURE_ENTITY_CONTAINER = "entityContainer";
     public static final String OBJECT_FEATURE_OBJECT_CONTAINER = "objectContainer";
     public static final String OBJECT_FEATURE_SCHEMA = "schema";
@@ -168,6 +170,7 @@ public class WebDatabaseObjectInfo {
     }
 
     private static void getObjectFeatures(DBSObject object, List<String> features) {
+        boolean isDiagramSupported = true;
         if (object instanceof DBPScriptObject) features.add(OBJECT_FEATURE_SCRIPT);
         if (object instanceof DBPScriptObjectExt) features.add(OBJECT_FEATURE_SCRIPT_EXTENDED);
         if (object instanceof DBSDataContainer) {
@@ -175,16 +178,28 @@ public class WebDatabaseObjectInfo {
             if (((DBSDataContainer) object).isFeatureSupported(DBSDataContainer.FEATURE_DATA_FILTER)) {
                 features.add(OBJECT_FEATURE_DATA_CONTAINER_SUPPORTS_FILTERS);
             }
+            if (((DBSDataContainer) object).isFeatureSupported(DBSDataContainer.FEATURE_KEY_VALUE)) {
+                isDiagramSupported = false;
+            }
         }
         if (object instanceof DBSDataManipulator) features.add(OBJECT_FEATURE_DATA_MANIPULATOR);
-        if (object instanceof DBSEntity && !(object instanceof DBSDataType)) features.add(OBJECT_FEATURE_ENTITY);
+        if (object instanceof DBSEntity) {
+            features.add(OBJECT_FEATURE_ENTITY);
+            if (object instanceof DBSDataType
+                || object instanceof DBSDocumentContainer) {
+                isDiagramSupported = false;
+            }
+            if (isDiagramSupported) {
+                features.add(OBJECT_FEATURE_RELATIONAL_ENTITY);
+            }
+        }
         if (object instanceof DBSSchema) features.add(OBJECT_FEATURE_SCHEMA);
         if (object instanceof DBSCatalog) features.add(OBJECT_FEATURE_CATALOG);
         if (object instanceof DBSObjectContainer) {
             features.add(OBJECT_FEATURE_OBJECT_CONTAINER);
             try {
                 Class<? extends DBSObject> childType = ((DBSObjectContainer) object).getPrimaryChildType(null);
-                if (DBSEntity.class.isAssignableFrom(childType)) {
+                if (DBSTable.class.isAssignableFrom(childType)) {
                     features.add(OBJECT_FEATURE_ENTITY_CONTAINER);
                 }
             } catch (Exception e) {

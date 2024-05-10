@@ -1,44 +1,62 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import type { ButtonHTMLAttributes } from 'react';
-import styled from 'reshadow';
+import { ButtonHTMLAttributes, forwardRef } from 'react';
 
-import { IconOrImage, Loader, useStateDelay } from '@cloudbeaver/core-blocks';
-import { Translate, useTranslate } from '@cloudbeaver/core-localization';
-import { ComponentStyle, useStyles } from '@cloudbeaver/core-theming';
+import { Icon, IconOrImage, Loader, s, useS, useStateDelay, useTranslate } from '@cloudbeaver/core-blocks';
+
+import style from './MenuBarItem.m.css';
 
 interface Props extends Omit<React.DetailedHTMLProps<ButtonHTMLAttributes<HTMLButtonElement>, HTMLButtonElement>, 'style'> {
   label?: string;
+  /** @deprecated must be refactored (#1)*/
+  displayLabel?: boolean;
   loading?: boolean;
-  icon?: string;
+  hidden?: boolean;
+  icon?: string | React.ReactNode;
+  displaySubmenuMark?: boolean;
   viewBox?: string;
-  style?: ComponentStyle;
 }
 
-export const MenuBarItem = observer<Props, HTMLButtonElement>(function MenuBarItem({
-  label,
-  loading = false,
-  icon,
-  viewBox = '0 0 24 24',
-  style = [],
-  ...rest
-}, ref) {
-  const translate = useTranslate();
-  loading = useStateDelay(loading, 100);
+export const MenuBarItem = observer<Props, HTMLButtonElement>(
+  forwardRef(function MenuBarItem(
+    { label, displayLabel = true, loading = false, hidden, icon, displaySubmenuMark, viewBox = '0 0 24 24', className, ...rest },
+    ref,
+  ) {
+    const styles = useS(style);
+    const translate = useTranslate();
+    loading = useStateDelay(loading, 100);
 
-  const title = translate(rest.title);
-  return styled(useStyles(style))(
-    <menu-bar-item ref={ref} as='button' {...rest} title={title} aria-label={title}>
-      {loading && <Loader small fullSize />}
-      {!loading && icon && <IconOrImage icon={icon} viewBox={viewBox} />}
-      {label && <item-label><Translate token={label} /></item-label>}
-    </menu-bar-item>
-  );
-}, { forwardRef: true });
+    const title = translate(rest.title);
+    return (
+      <button ref={ref} className={s(styles, { menuBarItem: true, hidden }, className)} {...rest} title={title} aria-label={title}>
+        <div className={s(styles, { menuBarItemBox: true })}>
+          {loading ? (
+            <div className={s(styles, { menuBarItemIcon: true })}>
+              <Loader className={s(styles, { loader: true })} small fullSize />
+            </div>
+          ) : (
+            icon && (
+              <div className={s(styles, { menuBarItemIcon: true })}>
+                <Loader className={s(styles, { loader: true })} suspense small fullSize>
+                  {typeof icon === 'string' ? <IconOrImage className={s(styles, { iconOrImage: true })} icon={icon} viewBox={viewBox} /> : icon}
+                </Loader>
+              </div>
+            )
+          )}
+          {label && displayLabel && <div className={s(styles, { menuBarItemLabel: true })}>{translate(label)}</div>}
+          {displaySubmenuMark && (
+            <div className={s(styles, { menuBarItemMark: true })}>
+              <Icon className={s(styles, { icon: true }, className)} name="angle" viewBox="0 0 15 8" />
+            </div>
+          )}
+        </div>
+      </button>
+    );
+  }),
+);

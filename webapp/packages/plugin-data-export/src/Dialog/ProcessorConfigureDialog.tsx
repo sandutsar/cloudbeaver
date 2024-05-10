@@ -1,96 +1,128 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
+import { useState } from 'react';
 
-import { IProperty, PropertiesTable, ErrorMessage } from '@cloudbeaver/core-blocks';
-import { CommonDialogWrapper } from '@cloudbeaver/core-dialogs';
-import { useTranslate } from '@cloudbeaver/core-localization';
-import type { DataTransferProcessorInfo, GQLErrorCatcher } from '@cloudbeaver/core-sdk';
-import { useStyles } from '@cloudbeaver/core-theming';
+import {
+  CommonDialogBody,
+  CommonDialogFooter,
+  CommonDialogHeader,
+  CommonDialogWrapper,
+  ErrorMessage,
+  IProperty,
+  PropertiesTable,
+  s,
+  SContext,
+  useErrorDetails,
+  useS,
+  useTranslate,
+} from '@cloudbeaver/core-blocks';
+import type { DataTransferOutputSettings, DataTransferProcessorInfo } from '@cloudbeaver/core-sdk';
+import { ITabData, Tab, TabList, TabsState, TabTitle, TabUnderlineStyleRegistry } from '@cloudbeaver/core-ui';
 
+import { OutputOptionsForm } from './OutputOptionsForm';
+import style from './ProcessorConfigureDialog.m.css';
 import { ProcessorConfigureDialogFooter } from './ProcessorConfigureDialogFooter';
-
-const styles = css`
-    Tab {
-      composes: theme-ripple theme-background-secondary theme-text-on-secondary from global;
-    }
-    PropertiesTable {
-      flex: 1;
-      overflow: hidden;
-    }
-    message {
-      margin: auto;
-    }
-    ErrorMessage {
-      composes: theme-background-secondary theme-text-on-secondary from global;
-      position: sticky;
-      bottom: 0;
-      padding: 8px 24px;
-    }
-  `;
 
 interface Props {
   processor: DataTransferProcessorInfo;
   properties: IProperty[];
   processorProperties: any;
-  error: GQLErrorCatcher;
+  outputSettings: Partial<DataTransferOutputSettings>;
+  error: Error | null;
   isExporting: boolean;
-  onShowDetails: () => void;
   onClose: () => void;
   onBack: () => void;
   onExport: () => void;
+}
+
+enum SETTINGS_TABS {
+  EXTRACTION = 'EXTRACTION',
+  OUTPUT = 'OUTPUT',
 }
 
 export const ProcessorConfigureDialog = observer<Props>(function ProcessorConfigureDialog({
   processor,
   properties,
   processorProperties,
+  outputSettings,
   error,
   isExporting,
-  onShowDetails,
   onClose,
   onBack,
   onExport,
 }) {
   const translate = useTranslate();
-  const title = `${translate('data_transfer_dialog_configuration_title')} (${processor.name})`;
+  const styles = useS(style);
 
-  return styled(useStyles(styles))(
-    <CommonDialogWrapper
-      size='large'
-      title={title}
-      footer={(
+  const title = `${translate('data_transfer_dialog_configuration_title')} (${processor.name})`;
+  const [currentTabId, setCurrentTabId] = useState(SETTINGS_TABS.EXTRACTION);
+  const errorDetails = useErrorDetails(error);
+
+  function handleTabChange(tab: ITabData) {
+    setCurrentTabId(tab.tabId as SETTINGS_TABS);
+  }
+
+  function handleNextClick() {
+    setCurrentTabId(SETTINGS_TABS.OUTPUT);
+  }
+
+  function handleBackClick() {
+    if (currentTabId === SETTINGS_TABS.OUTPUT) {
+      setCurrentTabId(SETTINGS_TABS.EXTRACTION);
+    } else {
+      onBack();
+    }
+  }
+
+  return (
+    <CommonDialogWrapper className={s(styles, { container: true })} size="large" fixedSize>
+      <CommonDialogHeader title={title} onReject={onClose} />
+      <CommonDialogBody noOverflow noBodyPadding>
+        {!processor.isBinary ? (
+          <TabsState currentTabId={currentTabId} onChange={handleTabChange}>
+            <SContext registry={TabUnderlineStyleRegistry}>
+              <TabList className={s(styles, { tabList: true })} aria-label="Export Settings tabs">
+                <Tab tabId={SETTINGS_TABS.EXTRACTION}>
+                  <TabTitle>{translate('data_transfer_format_settings')}</TabTitle>
+                </Tab>
+                <Tab tabId={SETTINGS_TABS.OUTPUT}>
+                  <TabTitle>{translate('data_transfer_output_settings')}</TabTitle>
+                </Tab>
+              </TabList>
+            </SContext>
+          </TabsState>
+        ) : null}
+        {currentTabId === SETTINGS_TABS.EXTRACTION ? (
+          <PropertiesTable className={s(styles, { propertiesTable: true })} properties={properties} propertiesState={processorProperties} />
+        ) : (
+          <OutputOptionsForm outputSettings={outputSettings} />
+        )}
+
+        {error && (
+          <ErrorMessage
+            className={s(styles, { errorMessage: true })}
+            text={errorDetails.message ?? translate('core_blocks_exception_message_error_message')}
+            hasDetails={errorDetails.hasDetails}
+            onShowDetails={errorDetails.open}
+          />
+        )}
+      </CommonDialogBody>
+      <CommonDialogFooter>
         <ProcessorConfigureDialogFooter
           isExporting={isExporting}
+          isFinalStep={currentTabId === SETTINGS_TABS.OUTPUT || !!processor.isBinary}
           onExport={onExport}
-          onBack={onBack}
+          onBack={handleBackClick}
           onCancel={onClose}
+          onNext={handleNextClick}
         />
-      )}
-      fixedSize
-      noOverflow
-      noBodyPadding
-      onReject={onClose}
-    >
-      <PropertiesTable
-        properties={properties}
-        propertiesState={processorProperties}
-      />
-      {error.responseMessage && (
-        <ErrorMessage
-          text={error.responseMessage}
-          hasDetails={error.hasDetails}
-          onShowDetails={onShowDetails}
-        />
-      )}
+      </CommonDialogFooter>
     </CommonDialogWrapper>
   );
-}
-);
+});

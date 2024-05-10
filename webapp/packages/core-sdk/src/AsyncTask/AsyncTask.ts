@@ -1,13 +1,13 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { computed, makeObservable, observable } from 'mobx';
 
+import { type ISyncExecutor, SyncExecutor } from '@cloudbeaver/core-executor';
 import { uuid } from '@cloudbeaver/core-utils';
 
 import type { AsyncTaskInfo } from '../sdk';
@@ -32,20 +32,19 @@ export class AsyncTask {
     return this.innerPromise;
   }
 
+  readonly onStatusChange: ISyncExecutor<AsyncTaskInfo>;
+
   private _cancelled: boolean;
   private taskInfo: AsyncTaskInfo | null;
   private resolve!: (value: AsyncTaskInfo) => void;
   private reject!: (reason?: any) => void;
-  private innerPromise: Promise<AsyncTaskInfo>;
+  private readonly innerPromise: Promise<AsyncTaskInfo>;
   private updatingAsync: boolean;
-  private init: () => Promise<AsyncTaskInfo>;
-  private cancel: (info: AsyncTaskInfo) => Promise<void>;
+  private readonly init: () => Promise<AsyncTaskInfo>;
+  private readonly cancel: (info: AsyncTaskInfo) => Promise<void>;
   private initPromise: Promise<void> | null;
 
-  constructor(
-    init: () => Promise<AsyncTaskInfo>,
-    cancel: (info: AsyncTaskInfo) => Promise<void>
-  ) {
+  constructor(init: () => Promise<AsyncTaskInfo>, cancel: (info: AsyncTaskInfo) => Promise<void>) {
     this.id = uuid();
     this.init = init;
     this.cancel = cancel;
@@ -53,6 +52,7 @@ export class AsyncTask {
     this.updatingAsync = false;
     this.taskInfo = null;
     this.initPromise = null;
+    this.onStatusChange = new SyncExecutor();
 
     this.innerPromise = new Promise((resolve, reject) => {
       this.reject = reject;
@@ -107,7 +107,7 @@ export class AsyncTask {
     }
 
     if (!this.pending) {
-      throw new Error('Can\'t cancel finished task');
+      throw new Error("Can't cancel finished task");
     }
 
     this._cancelled = true;
@@ -129,6 +129,7 @@ export class AsyncTask {
         this.resolve(info);
       }
     }
+    this.onStatusChange.execute(this.taskInfo);
   }
 
   private async cancelTask(): Promise<void> {

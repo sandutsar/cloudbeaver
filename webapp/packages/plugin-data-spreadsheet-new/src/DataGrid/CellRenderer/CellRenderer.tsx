@@ -1,20 +1,19 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { computed, observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useContext, useEffect } from 'react';
-import type { CalculatedColumn, CellRendererProps } from 'react-data-grid';
-import { Cell } from 'react-data-grid';
 
-import { getComputed, useMouse, useObjectRef, useObservableRef } from '@cloudbeaver/core-blocks';
+import { getComputed, useCombinedHandler, useMouse, useObjectRef, useObservableRef } from '@cloudbeaver/core-blocks';
 import { EventContext, EventStopPropagationFlag } from '@cloudbeaver/core-events';
-import { IResultSetElementKey, IResultSetRowKey, isBooleanValuePresentationAvailable, DatabaseEditChangeType } from '@cloudbeaver/plugin-data-viewer';
+import { clsx } from '@cloudbeaver/core-utils';
+import { DatabaseEditChangeType, IResultSetElementKey, IResultSetRowKey, isBooleanValuePresentationAvailable } from '@cloudbeaver/plugin-data-viewer';
+import { CalculatedColumn, Cell, CellRendererProps } from '@cloudbeaver/plugin-react-data-grid';
 
 import { CellPosition, EditingContext } from '../../Editing/EditingContext';
 import { DataGridContext } from '../DataGridContext';
@@ -22,79 +21,77 @@ import { DataGridSelectionContext } from '../DataGridSelection/DataGridSelection
 import { TableDataContext } from '../TableDataContext';
 import { CellContext } from './CellContext';
 
-export const CellRenderer = observer<CellRendererProps<IResultSetRowKey>>(function CellRenderer(props) {
-  const { rowIdx, row, column, isCellSelected } = props;
+export const CellRenderer = observer<CellRendererProps<IResultSetRowKey, unknown>>(function CellRenderer(props) {
+  const { rowIdx, row, column, isCellSelected, onDoubleClick, selectCell } = props;
   const dataGridContext = useContext(DataGridContext);
   const tableDataContext = useContext(TableDataContext);
   const selectionContext = useContext(DataGridSelectionContext);
   const editingContext = useContext(EditingContext);
   const mouse = useMouse<HTMLDivElement>({});
 
-  const cellContext = useObservableRef(() => ({
-    mouse,
-    get position(): CellPosition {
-      return { idx: this.column.idx, rowIdx: this.rowIdx };
-    },
-    get cell(): IResultSetElementKey | undefined {
-      if (this.column.columnDataIndex === null) {
-        return undefined;
-      }
-      return { row: this.row, column: this.column.columnDataIndex };
-    },
-    get isEditing(): boolean {
-      return editingContext?.isEditing(this.position) || false;
-    },
-    get isSelected(): boolean {
-      return selectionContext?.isSelected(this.position.rowIdx, this.position.idx) || false;
-    },
-    get editionState(): DatabaseEditChangeType | null {
-      if (!this.cell || !tableDataContext) {
-        return null;
-      }
+  const cellContext = useObservableRef(
+    () => ({
+      mouse,
+      get position(): CellPosition {
+        return { idx: this.column.idx, rowIdx: this.rowIdx };
+      },
+      get cell(): IResultSetElementKey | undefined {
+        if (this.column.columnDataIndex === null) {
+          return undefined;
+        }
+        return { row: this.row, column: this.column.columnDataIndex };
+      },
+      get isEditing(): boolean {
+        return editingContext.isEditing(this.position) || false;
+      },
+      get isSelected(): boolean {
+        return selectionContext.isSelected(this.position.rowIdx, this.position.idx) || false;
+      },
+      get isFocused(): boolean {
+        return this.isEditing ? false : this.isCellSelected;
+      },
+      get editionState(): DatabaseEditChangeType | null {
+        if (!this.cell) {
+          return null;
+        }
 
-      return tableDataContext.getEditionState(this.cell);
+        return tableDataContext.getEditionState(this.cell);
+      },
+    }),
+    {
+      row: observable.ref,
+      column: observable.ref,
+      rowIdx: observable.ref,
+      isCellSelected: observable.ref,
+      position: computed,
+      cell: computed,
+      isEditing: computed,
+      isSelected: computed,
+      isFocused: computed,
+      editionState: computed,
     },
-  }), {
-    row: observable.ref,
-    column: observable.ref,
-    rowIdx: observable.ref,
-    position: computed,
-    cell: computed,
-    isEditing: computed,
-    isSelected: computed,
-    editionState: computed,
-  }, { row, column, rowIdx });
+    { row, column, rowIdx, isCellSelected },
+  );
 
-  const classes = getComputed(() => {
-    let classes = '';
-    if (cellContext.isSelected) {
-      classes += ' rdg-cell-custom-selected';
+  const classes = getComputed(() =>
+    clsx({
+      'rdg-cell-custom-selected': cellContext.isSelected,
+      'rdg-cell-custom-editing': cellContext.isEditing,
+      'rdg-cell-custom-added': cellContext.editionState === DatabaseEditChangeType.add,
+      'rdg-cell-custom-deleted': cellContext.editionState === DatabaseEditChangeType.delete,
+      'rdg-cell-custom-edited': cellContext.editionState === DatabaseEditChangeType.update,
+    }),
+  );
+
+  function isEditable(column: CalculatedColumn<IResultSetRowKey>): boolean {
+    if (!cellContext.cell) {
+      return false;
     }
 
-    if (cellContext.isEditing) {
-      classes += ' rdg-cell-custom-editing';
-    }
-
-    if (cellContext.editionState !== null) {
-      switch (cellContext.editionState) {
-        case DatabaseEditChangeType.add:
-          classes += ' rdg-cell-custom-added';
-          break;
-        case DatabaseEditChangeType.delete:
-          classes += ' rdg-cell-custom-deleted';
-          break;
-        case DatabaseEditChangeType.update:
-          classes += ' rdg-cell-custom-edited';
-      }
-    }
-    return classes;
-  });
-
-  function isEditable(column: CalculatedColumn<IResultSetRowKey, unknown>): boolean {
     if (
-      !editingContext
-      || !tableDataContext
-      || !cellContext.cell
+      tableDataContext.format.isBinary(cellContext.cell) ||
+      tableDataContext.format.isGeometry(cellContext.cell) ||
+      tableDataContext.dataContent.isTextTruncated(cellContext.cell)
     ) {
       return false;
     }
@@ -108,54 +105,59 @@ export const CellRenderer = observer<CellRendererProps<IResultSetRowKey>>(functi
 
     const handleByBooleanFormatter = isBooleanValuePresentationAvailable(value, resultColumn);
 
-    return !(
-      handleByBooleanFormatter
-      || tableDataContext.isCellReadonly(cellContext.cell)
-    );
+    return !(handleByBooleanFormatter || tableDataContext.isCellReadonly(cellContext.cell));
   }
 
-  const state = useObjectRef(() => ({
-    mouseUp(event: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-      if (
-        !this.selectionContext
-        || !this.dataGridContext?.isGridInFocus()
-        || EventContext.has(event, EventStopPropagationFlag)
-      ) {
-        return;
-      }
+  const state = useObjectRef(
+    () => ({
+      mouseDown(event: React.MouseEvent<HTMLDivElement>) {
+        // this.selectCell(this.row, this.column);
+      },
+      mouseUp(event: React.MouseEvent<HTMLDivElement>) {
+        if (
+          // !this.dataGridContext.isGridInFocus()
+          EventContext.has(event, EventStopPropagationFlag)
+        ) {
+          return;
+        }
 
-      this.selectionContext.select(
-        {
-          colIdx: this.column.idx,
-          rowIdx: this.rowIdx,
-        },
-        event.ctrlKey || event.metaKey,
-        event.shiftKey,
-        false
-      );
+        this.selectionContext.select(
+          {
+            colIdx: this.column.idx,
+            rowIdx: this.rowIdx,
+          },
+          event.ctrlKey || event.metaKey,
+          event.shiftKey,
+          false,
+        );
+      },
+      doubleClick(args: any, event: React.MouseEvent<HTMLDivElement>) {
+        if (
+          !this.isEditable(this.column) ||
+          // !this.dataGridContext.isGridInFocus()
+          EventContext.has(event, EventStopPropagationFlag)
+        ) {
+          return;
+        }
+
+        this.editingContext.edit(cellContext.position);
+      },
+    }),
+    {
+      row,
+      column,
+      rowIdx,
+      selectionContext,
+      dataGridContext,
+      editingContext,
+      isEditable,
+      selectCell,
     },
-    doubleClick(event: React.MouseEvent<HTMLDivElement>) {
-      if (
-        !this.isEditable(this.column)
-        || EventContext.has(event, EventStopPropagationFlag)
-      ) {
-        return;
-      }
+    ['doubleClick', 'mouseUp', 'mouseDown'],
+  );
 
-      this.editingContext.edit(cellContext.position);
-    },
-  }), {
-    column,
-    rowIdx,
-    isCellSelected,
-    selectionContext,
-    dataGridContext,
-    editingContext,
-    tableDataContext,
-    isEditable,
-  }, ['doubleClick', 'mouseUp']);
-
-  useEffect(() => () => editingContext?.closeEditor(cellContext.position), []);
+  useEffect(() => () => editingContext.closeEditor(cellContext.position), []);
+  const handleDoubleClick = useCombinedHandler(state.doubleClick, onDoubleClick);
 
   return (
     <CellContext.Provider value={cellContext}>
@@ -164,9 +166,10 @@ export const CellRenderer = observer<CellRendererProps<IResultSetRowKey>>(functi
         className={classes}
         data-row-index={rowIdx}
         data-column-index={column.idx}
+        onMouseDown={state.mouseDown}
         onMouseUp={state.mouseUp}
-        onDoubleClick={state.doubleClick}
         {...props}
+        onDoubleClick={handleDoubleClick}
       />
     </CellContext.Provider>
   );

@@ -1,11 +1,10 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { makeObservable, observable } from 'mobx';
 
 import { ConnectionExecutionContextService } from '@cloudbeaver/core-connections';
@@ -16,6 +15,7 @@ import { AsyncTaskInfoService, GraphQLService, SqlExecutionPlan } from '@cloudbe
 import { uuid } from '@cloudbeaver/core-utils';
 
 import type { ISqlEditorTabState } from '../../ISqlEditorTabState';
+import { SqlDataSourceService } from '../../SqlDataSource/SqlDataSourceService';
 
 interface IExecutionPlanData {
   task: ITask<SqlExecutionPlan>;
@@ -30,7 +30,8 @@ export class SqlExecutionPlanService {
     private readonly graphQLService: GraphQLService,
     private readonly notificationService: NotificationService,
     private readonly asyncTaskInfoService: AsyncTaskInfoService,
-    private readonly connectionExecutionContextService: ConnectionExecutionContextService
+    private readonly connectionExecutionContextService: ConnectionExecutionContextService,
+    private readonly sqlDataSourceService: SqlDataSourceService,
   ) {
     this.data = new Map();
 
@@ -39,11 +40,9 @@ export class SqlExecutionPlanService {
     });
   }
 
-  async executeExecutionPlan(
-    editorState: ISqlEditorTabState,
-    query: string,
-  ): Promise<void> {
-    const contextInfo = editorState.executionContext;
+  async executeExecutionPlan(editorState: ISqlEditorTabState, query: string): Promise<void> {
+    const dataSource = this.sqlDataSourceService.get(editorState.editorId);
+    const contextInfo = dataSource?.executionContext;
 
     const executionContext = contextInfo && this.connectionExecutionContextService.get(contextInfo.id);
 
@@ -57,6 +56,7 @@ export class SqlExecutionPlanService {
 
     const asyncTask = this.asyncTaskInfoService.create(async () => {
       const { taskInfo } = await this.graphQLService.sdk.asyncSqlExplainExecutionPlan({
+        projectId: contextInfo.projectId,
         connectionId: contextInfo.connectionId,
         contextId: contextInfo.id,
         query,
@@ -74,7 +74,7 @@ export class SqlExecutionPlanService {
         return result;
       },
       () => this.asyncTaskInfoService.cancel(asyncTask.id),
-      () => this.asyncTaskInfoService.remove(asyncTask.id)
+      () => this.asyncTaskInfoService.remove(asyncTask.id),
     );
 
     this.data.set(tabId, {
@@ -87,7 +87,8 @@ export class SqlExecutionPlanService {
 
       const tab = editorState.tabs.find(tab => tab.id === tabId);
 
-      if (!tab) { // tab can be closed before we get result
+      if (!tab) {
+        // tab can be closed before we get result
         return;
       }
 
@@ -138,8 +139,9 @@ export class SqlExecutionPlanService {
   }
 
   private createExecutionPlanTab(state: ISqlEditorTabState, query: string) {
-    if (!state.executionContext) {
-      throw new Error('ExecutionContext is not provided');
+    const dataSource = this.sqlDataSourceService.get(state.editorId);
+    if (!dataSource) {
+      throw new Error('SQL Data Source is not provided');
     }
 
     const id = uuid();

@@ -1,19 +1,16 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import type { ComponentStyle } from '@cloudbeaver/core-theming';
-
 import type { IRouteParams } from './IRouteParams';
 
 export enum AdministrationItemType {
   Default,
   Administration,
-  ConfigurationWizard
+  ConfigurationWizard,
 }
 
 export interface IAdministrationItemReplaceOptions {
@@ -25,7 +22,6 @@ export interface AdministrationItemDrawerProps {
   item: IAdministrationItem;
   configurationWizard: boolean;
   onSelect: (id: string) => void;
-  style: ComponentStyle;
   disabled?: boolean;
 }
 export type AdministrationItemDrawerComponent = React.FunctionComponent<AdministrationItemDrawerProps>;
@@ -44,24 +40,15 @@ export type AdministrationItemSubContentProps = AdministrationItemContentProps &
 };
 export type AdministrationItemSubContentComponent = React.FunctionComponent<AdministrationItemSubContentProps>;
 
-export type AdministrationItemEvent = (
+export type AdministrationItemEvent = (configurationWizard: boolean, outside: boolean, outsideAdminPage: boolean) => Promise<void> | void;
+export type AdministrationItemCanActivateEvent = (configurationWizard: boolean, administration: boolean) => Promise<boolean> | boolean;
+export type AdministrationItemCanDeActivateEvent = (
   configurationWizard: boolean,
-  outside: boolean,
-  outsideAdminPage: boolean
-) => Promise<void> | void;
-export type AdministrationItemCanActivateEvent = (
-  configurationWizard: boolean,
-  administration: boolean
+  administration: boolean,
+  nextAdministrationItem: IAdministrationItem | null,
 ) => Promise<boolean> | boolean;
-export type AdministrationItemSubEvent = (
-  param: string | null,
-  configurationWizard: boolean,
-  outside: boolean
-) => Promise<void> | void;
-export type AdministrationItemSubCanActivateEvent = (
-  param: string | null,
-  configurationWizard: boolean
-) => Promise<boolean> | boolean;
+export type AdministrationItemSubEvent = (param: string | null, configurationWizard: boolean, outside: boolean) => Promise<void> | void;
+export type AdministrationItemSubCanActivateEvent = (param: string | null, configurationWizard: boolean) => Promise<boolean> | boolean;
 
 export interface IAdministrationItemSubItem {
   name: string;
@@ -93,6 +80,7 @@ export interface IAdministrationItemOptions {
   sub?: IAdministrationItemSubItem[];
   isHidden?: ((configurationWizard: boolean) => boolean) | boolean;
   isOnlyActive?: ((configurationWizard: boolean) => boolean) | boolean;
+  filterOnlyActive?: (configurationWizard: boolean, item: IAdministrationItem) => boolean;
   replace?: IAdministrationItemReplaceOptions;
   defaultSub?: string;
   defaultParam?: string;
@@ -102,7 +90,7 @@ export interface IAdministrationItemOptions {
   onActivate?: AdministrationItemEvent;
   onDeActivate?: AdministrationItemEvent;
   canActivate?: AdministrationItemCanActivateEvent;
-  canDeActivate?: AdministrationItemCanActivateEvent;
+  canDeActivate?: AdministrationItemCanDeActivateEvent;
 }
 
 export interface IAdministrationItem extends IAdministrationItemOptions {

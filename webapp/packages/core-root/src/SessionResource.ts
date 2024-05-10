@@ -1,19 +1,18 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { injectable } from '@cloudbeaver/core-di';
-import {
-  GraphQLService,
-  CachedDataResource,
-  SessionStateFragment
-} from '@cloudbeaver/core-sdk';
+import { LocalizationService } from '@cloudbeaver/core-localization';
+import { CachedDataResource } from '@cloudbeaver/core-resource';
+import { GraphQLService, SessionStateFragment } from '@cloudbeaver/core-sdk';
 
 import { ServerConfigResource } from './ServerConfigResource';
+import { ServerEventId } from './SessionEventSource';
+import { type ISessionStateEvent, SessionInfoEventHandler } from './SessionInfoEventHandler';
 
 export type SessionState = SessionStateFragment;
 export interface ISessionAction {
@@ -24,16 +23,25 @@ export interface ISessionAction {
 @injectable()
 export class SessionResource extends CachedDataResource<SessionState | null> {
   private action: ISessionAction | null;
-  private defaultLocale: string | undefined;
 
   constructor(
     private readonly graphQLService: GraphQLService,
-    serverConfigResource: ServerConfigResource
+    private readonly sessionInfoEventHandler: SessionInfoEventHandler,
+    serverConfigResource: ServerConfigResource,
+    private readonly localizationService: LocalizationService,
   ) {
-    super(null);
+    super(() => null);
+
+    this.handleSessionStateEvent = this.handleSessionStateEvent.bind(this);
+
+    sessionInfoEventHandler.onEvent(ServerEventId.CbSessionState, this.handleSessionStateEvent, undefined, this);
 
     this.action = null;
-    this.sync(serverConfigResource);
+    this.sync(
+      serverConfigResource,
+      () => {},
+      () => {},
+    );
   }
 
   processAction(): ISessionAction | null {
@@ -44,39 +52,59 @@ export class SessionResource extends CachedDataResource<SessionState | null> {
     }
   }
 
-  setDefaultLocale(defaultLocale?: string): void {
-    this.defaultLocale = defaultLocale;
-  }
-
-  //! this method results in onDataUpdate handler skipping
-  async refreshSilent(): Promise<void> {
-    const session = await this.loader();
-
-    this.setData(session);
-  }
-
-  async changeLanguage(locale: string): Promise<void> {
-    await this.performUpdate(undefined, undefined, async () => {
-      await this.graphQLService.sdk.changeSessionLanguage({ locale });
-
-      this.defaultLocale = locale;
-      if (this.data) {
-        this.data.locale = locale;
+  private handleSessionStateEvent(event: ISessionStateEvent) {
+    this.performUpdate(undefined, [], async () => {
+      if (!this.data) {
+        return;
       }
+
+      const sessionState: SessionState = {
+        ...this.data,
+        valid: event?.isValid ?? this.data.valid,
+        remainingTime: event.remainingTime,
+        actionParameters: event.actionParameters,
+        cacheExpired: event?.isCacheExpired ?? this.data.cacheExpired,
+        lastAccessTime: String(event.lastAccessTime),
+        locale: event.locale,
+      };
+
+      this.setData(sessionState);
     });
   }
 
+  async changeLanguage(locale: string): Promise<void> {
+    await this.load();
+    if (this.data?.locale === locale) {
+      return;
+    }
+    await this.graphQLService.sdk.changeSessionLanguage({ locale });
+
+    if (this.data) {
+      this.data.locale = locale;
+    }
+
+    this.markOutdated();
+  }
+
   protected async loader(): Promise<SessionState> {
-    const { session } = await this.graphQLService.sdk.openSession({ defaultLocale: this.defaultLocale });
+    const { session } = await this.graphQLService.sdk.openSession({ defaultLocale: this.localizationService.currentLanguage });
 
     return session;
   }
 
-  protected setData(data: SessionState | null) { 
+  pingSession() {
+    if (!this.data?.valid) {
+      return;
+    }
+
+    this.sessionInfoEventHandler.pingSession();
+  }
+
+  protected setData(data: SessionState | null) {
     if (!this.action) {
       this.action = data?.actionParameters;
     }
 
-    this.data = data;
+    super.setData(data);
   }
 }

@@ -1,12 +1,11 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { observable, makeObservable } from 'mobx';
+import { makeObservable, observable } from 'mobx';
 
 import { Executor, ExecutorInterrupter, IExecutor } from '@cloudbeaver/core-executor';
 import type { ResultDataFormat } from '@cloudbeaver/core-sdk';
@@ -16,8 +15,7 @@ import type { IDatabaseDataModel, IRequestEventData } from './IDatabaseDataModel
 import type { IDatabaseDataResult } from './IDatabaseDataResult';
 import type { DatabaseDataAccessMode, IDatabaseDataSource, IRequestInfo } from './IDatabaseDataSource';
 
-export class DatabaseDataModel<TOptions, TResult extends IDatabaseDataResult = IDatabaseDataResult>
-implements IDatabaseDataModel<TOptions, TResult> {
+export class DatabaseDataModel<TOptions, TResult extends IDatabaseDataResult = IDatabaseDataResult> implements IDatabaseDataModel<TOptions, TResult> {
   id: string;
   name: string | null;
   source: IDatabaseDataSource<TOptions, TResult>;
@@ -31,6 +29,7 @@ implements IDatabaseDataModel<TOptions, TResult> {
     return this.source.supportedDataFormats;
   }
 
+  readonly onDispose: IExecutor;
   readonly onOptionsChange: IExecutor;
   readonly onRequest: IExecutor<IRequestEventData<TOptions, TResult>>;
 
@@ -41,6 +40,7 @@ implements IDatabaseDataModel<TOptions, TResult> {
     this.name = null;
     this.source = source;
     this.countGain = 0;
+    this.onDispose = new Executor();
     this.onOptionsChange = new Executor();
     this.onRequest = new Executor();
     this.currentTask = null;
@@ -58,8 +58,8 @@ implements IDatabaseDataModel<TOptions, TResult> {
     return this.source.isDisabled(resultIndex);
   }
 
-  isReadonly(): boolean {
-    return this.source.isReadonly();
+  isReadonly(resultIndex: number): boolean {
+    return this.source.isReadonly(resultIndex);
   }
 
   isDataAvailable(offset: number, count: number): boolean {
@@ -74,7 +74,7 @@ implements IDatabaseDataModel<TOptions, TResult> {
     return this.source.getResult(index);
   }
 
-  setName(name: string | null){
+  setName(name: string | null) {
     this.name = name;
     return this;
   }
@@ -117,7 +117,7 @@ implements IDatabaseDataModel<TOptions, TResult> {
   async requestOptionsChange(): Promise<boolean> {
     const contexts = await this.onOptionsChange.execute();
 
-    return ExecutorInterrupter.isInterrupted(contexts) === false;
+    return !ExecutorInterrupter.isInterrupted(contexts);
   }
 
   async save(): Promise<void> {
@@ -145,23 +145,17 @@ implements IDatabaseDataModel<TOptions, TResult> {
   }
 
   async reload(): Promise<void> {
-    await this.requestDataAction(() => this.source
-      .setSlice(0, this.countGain)
-      .requestData()
-    );
+    await this.requestDataAction(() => this.source.setSlice(0, this.countGain).requestData());
   }
 
   async requestDataPortion(offset: number, count: number): Promise<void> {
     if (!this.isDataAvailable(offset, count)) {
-      await this.requestDataAction(() => this.source
-        .setSlice(offset, count)
-        .requestData()
-      );
+      await this.requestDataAction(() => this.source.setSlice(offset, count).requestData());
     }
   }
 
-  cancel(): Promise<void> | void {
-    return this.source.cancel();
+  async cancel(): Promise<void> {
+    await this.source.cancel();
   }
 
   resetData(): void {
@@ -169,6 +163,7 @@ implements IDatabaseDataModel<TOptions, TResult> {
   }
 
   async dispose(): Promise<void> {
+    await this.onDispose.execute();
     await this.source.dispose();
   }
 

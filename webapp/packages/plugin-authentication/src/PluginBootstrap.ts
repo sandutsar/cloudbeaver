@@ -1,25 +1,22 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { AuthInfoService } from '@cloudbeaver/core-authentication';
-import { injectable, Bootstrap } from '@cloudbeaver/core-di';
+import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 import { ServerConfigResource } from '@cloudbeaver/core-root';
-import { DATA_CONTEXT_MENU, MenuBaseItem, MenuService } from '@cloudbeaver/core-view';
+import { MenuBaseItem, MenuService } from '@cloudbeaver/core-view';
 import { TOP_NAV_BAR_SETTINGS_MENU } from '@cloudbeaver/plugin-settings-menu';
 
 import { AuthenticationService } from './AuthenticationService';
-import { AuthDialogService } from './Dialog/AuthDialogService';
 
 @injectable()
 export class PluginBootstrap extends Bootstrap {
   constructor(
     private readonly serverConfigResource: ServerConfigResource,
-    private readonly authDialogService: AuthDialogService,
     private readonly authenticationService: AuthenticationService,
     private readonly authInfoService: AuthInfoService,
     private readonly menuService: MenuService,
@@ -29,7 +26,7 @@ export class PluginBootstrap extends Bootstrap {
 
   register(): void {
     this.menuService.addCreator({
-      isApplicable: context => context.get(DATA_CONTEXT_MENU) === TOP_NAV_BAR_SETTINGS_MENU,
+      menus: [TOP_NAV_BAR_SETTINGS_MENU],
       getItems: (context, items) => {
         if (this.serverConfigResource.enabledAuthProviders.length > 0 && !this.authInfoService.userInfo) {
           return [
@@ -40,7 +37,7 @@ export class PluginBootstrap extends Bootstrap {
                 label: 'authentication_login',
                 tooltip: 'authentication_login',
               },
-              { onSelect: () => this.authDialogService.showLoginForm(false, null, true) }
+              { onSelect: () => this.authenticationService.authUser(null, false) },
             ),
           ];
         }
@@ -54,7 +51,7 @@ export class PluginBootstrap extends Bootstrap {
                 label: 'authentication_logout',
                 tooltip: 'authentication_logout',
               },
-              { onSelect: this.authenticationService.logout.bind(this.authenticationService) }
+              { onSelect: () => this.authenticationService.logout() },
             ),
           ];
         }
@@ -73,6 +70,4 @@ export class PluginBootstrap extends Bootstrap {
       },
     });
   }
-
-  load(): void | Promise<void> { }
 }

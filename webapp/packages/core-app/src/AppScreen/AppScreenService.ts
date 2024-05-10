@@ -1,38 +1,23 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
-import { injectable, Bootstrap } from '@cloudbeaver/core-di';
-import { Executor, IExecutor } from '@cloudbeaver/core-executor';
-import { ScreenService } from '@cloudbeaver/core-routing';
-
-import { AppScreen } from './AppScreen';
+import { PlaceholderContainer } from '@cloudbeaver/core-blocks';
+import { injectable } from '@cloudbeaver/core-di';
 
 @injectable()
-export class AppScreenService extends Bootstrap {
+export class AppScreenService {
   static screenName = 'app';
-  readonly activation: IExecutor<void>;
+  readonly placeholder: PlaceholderContainer;
+  readonly rightAreaTop: PlaceholderContainer;
+  readonly rightAreaBottom: PlaceholderContainer;
 
-  constructor(
-    private screenService: ScreenService
-  ) {
-    super();
-    this.activation = new Executor();
+  constructor() {
+    this.placeholder = new PlaceholderContainer();
+    this.rightAreaTop = new PlaceholderContainer();
+    this.rightAreaBottom = new PlaceholderContainer();
   }
-
-  register(): void {
-    this.screenService.create({
-      name: AppScreenService.screenName,
-      routes: [{ name: AppScreenService.screenName, path: '/' }],
-      component: AppScreen,
-      root: true,
-      onActivate: async () => { await this.activation.execute(); },
-    });
-  }
-
-  load(): void | Promise<void> { }
 }

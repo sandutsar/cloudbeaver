@@ -12,6 +12,8 @@ type ObjectPropertyInfo {
     displayName: String
     # Property description
     description: String
+    # Property hint
+    hint: String @since(version: "23.2.3")
     # Property category (may be used if object has a lot of properties)
     category: String
     # Property data type (int, String, etc)
@@ -32,6 +34,12 @@ type ObjectPropertyInfo {
     features: [ String! ]!
     # Order position
     order: Int!
+    # Supported configuration types (for driver properties)
+    supportedConfigurationTypes: [ String! ]
+    # Required parameters
+    required: Boolean! @since(version: "23.3.1")
+    # Parameter scopes
+    scopes:[String!]
 }
 
 enum ObjectPropertyLength {
@@ -93,6 +101,13 @@ type WebServiceConfig {
     bundleVersion: String!
 }
 
+type PasswordPolicyConfig @since(version: "23.3.3") {
+    minLength: Int!
+    minNumberCount: Int!
+    minSymbolCount: Int!
+    requireMixedCase: Boolean!
+}
+
 type ProductInfo {
     id: ID!
     version: String!
@@ -111,29 +126,31 @@ type ServerConfig {
     workspaceId: ID!
 
     serverURL: String!
-
     rootURI: String!
+    hostName: String! @deprecated # use container id instead
+    containerId: String!
+    defaultAuthRole: String
+    defaultUserTeam: String # [23.2.2]
 
-    hostName: String!
+    anonymousAccessEnabled: Boolean!
+    supportsCustomConnections: Boolean!
+    supportsConnectionBrowser: Boolean!
+    supportsWorkspaces: Boolean!
+    resourceManagerEnabled: Boolean!
 
-    anonymousAccessEnabled: Boolean
-    authenticationEnabled: Boolean @deprecated
-    supportsCustomConnections: Boolean
-    supportsConnectionBrowser: Boolean
-    supportsWorkspaces: Boolean
-
-    publicCredentialsSaveEnabled: Boolean
-    adminCredentialsSaveEnabled: Boolean
+    publicCredentialsSaveEnabled: Boolean!
+    adminCredentialsSaveEnabled: Boolean!
 
     licenseRequired: Boolean!
     licenseValid: Boolean!
 
-    sessionExpireTime: Int
+    sessionExpireTime: Int!
     localHostAddress: String
 
-    configurationMode: Boolean
-    developmentMode: Boolean
-    redirectOnFederatedAuth: Boolean
+    configurationMode: Boolean!
+    developmentMode: Boolean!
+    redirectOnFederatedAuth: Boolean!
+    distributed: Boolean!
 
     enabledFeatures: [ID!]!
     enabledAuthProviders: [ID!]!
@@ -144,6 +161,17 @@ type ServerConfig {
     defaultNavigatorSettings: NavigatorSettings!
     disabledDrivers: [ID!]!
     resourceQuotas: Object!
+    passwordPolicyConfiguration: PasswordPolicyConfig! @since(version: "23.3.3")
+}
+
+type ProductSettingsGroup @since(version: "24.0.1") {
+    id: ID!
+    displayName: String!
+}
+
+type ProductSettings @since(version: "24.0.1") {
+    groups: [ProductSettingsGroup!]!
+    settings: [ObjectPropertyInfo!]! # each property is associated with a group by category
 }
 
 type SessionInfo {
@@ -156,6 +184,9 @@ type SessionInfo {
     serverMessages: [ ServerMessage ]
     connections: [ ConnectionInfo! ]!
     actionParameters: Object
+
+    valid: Boolean!
+    remainingTime: Int!
 }
 
 ####################################################
@@ -169,6 +200,7 @@ type DatabaseAuthModel {
     icon: String
     # checks if the auth model needs a configuration on a local file system
     requiresLocalConfiguration: Boolean
+    requiredAuth: String
 
     properties: [ObjectPropertyInfo!]!
 }
@@ -195,9 +227,7 @@ type DriverInfo {
     embedded: Boolean
     enabled: Boolean!
     requiresServerName: Boolean
-
-    # this fields must be removed and be replaced by DriverAuthModel
-    allowsEmptyPassword: Boolean @deprecated
+    requiresDatabaseName: Boolean
 
     licenseRequired: Boolean
     license: String
@@ -229,6 +259,16 @@ type DriverInfo {
     applicableAuthModels: [ID!]!
 
     applicableNetworkHandlers: [ID]!
+
+    configurationTypes: [DriverConfigurationType]!
+
+    driverLibraries: [DriverLibraryInfo!]!
+}
+
+type DriverLibraryInfo {
+    id: ID!
+    name: String!
+    icon: String
 }
 
 enum ResultDataFormat {
@@ -236,6 +276,11 @@ enum ResultDataFormat {
     document,
     graph,
     timeseries
+}
+
+enum DriverConfigurationType {
+    MANUAL,
+    URL
 }
 
 ## Network handler config
@@ -262,15 +307,22 @@ type NetworkHandlerDescriptor {
     properties: [ObjectPropertyInfo!]!
 }
 
+# SSH network handler config. Name without prefix only for backward compatibility
 type NetworkHandlerConfig {
     id: ID!
     enabled: Boolean!
-    authType: NetworkHandlerAuthType!
+    authType: NetworkHandlerAuthType! @deprecated # use properties
     userName: String
     password: String
-    key: String
+    key: String @deprecated # use secured properties
     savePassword: Boolean!
     properties: Object!
+    secureProperties: Object!
+}
+
+type SecretInfo {
+    displayName: String!
+    secretId: String!
 }
 
 # Connection instance
@@ -287,16 +339,31 @@ type ConnectionInfo {
     databaseName: String
     url: String
 
+    keepAliveInterval: Int!
+
     properties: Object
 
     template: Boolean!
     connected: Boolean!
     provided: Boolean!
     readOnly: Boolean!
+    # Forces connection URL use, host/port/database parameters will be ignored
     useUrl: Boolean!
-    saveCredentials: Boolean!
 
-    folder: String
+    # Forces credentials save. This flag doesn't work in shared projects.
+    saveCredentials: Boolean!
+    # Shared credentials - the same for all users, stored in secure storage.
+    sharedCredentials: Boolean!
+
+    sharedSecrets: [SecretInfo!]! @since(version: "23.3.5")
+    # Determines that credentials were saved for current user.
+    # This field read is slow, it should be read only when it really needed
+    credentialsSaved: Boolean!
+    # Determines that additional credentials are needed to connect
+    # This field read is slow, it should be read only when it really needed
+    authNeeded: Boolean!
+
+    folder: ID
     nodePath: String
 
     connectTime: String
@@ -306,7 +373,6 @@ type ConnectionInfo {
 
     origin: ObjectOrigin!
 
-    authNeeded: Boolean!
     authModel: ID
     authProperties: [ObjectPropertyInfo!]!
 
@@ -317,6 +383,21 @@ type ConnectionInfo {
     features: [ String! ]!
     navigatorSettings: NavigatorSettings!
     supportedDataFormats: [ ResultDataFormat! ]!
+    configurationType: DriverConfigurationType
+
+    #Access properties
+    canViewSettings: Boolean!
+    canEdit: Boolean!
+    canDelete: Boolean!
+
+    projectId: ID!
+    requiredAuth: String
+}
+
+type ConnectionFolderInfo {
+    id: ID!
+    projectId: ID!
+    description: String
 }
 
 type NetworkEndpointInfo {
@@ -344,6 +425,27 @@ type NavigatorSettings {
     hideVirtualModel: Boolean!
 }
 
+type RMResourceType {
+    id: String!
+    displayName: String!
+    icon: String
+    fileExtensions: [String!]!
+    rootFolder: String
+}
+
+type ProjectInfo {
+    id: String!
+    global: Boolean!
+    shared: Boolean!
+    name: String!
+    description: String
+    canEditDataSources: Boolean!
+    canViewDataSources: Boolean!
+    canEditResources: Boolean!
+    canViewResources: Boolean!
+    resourceTypes: [RMResourceType!]!
+}
+
 type LogEntry {
     time: DateTime
     type: String!
@@ -368,12 +470,13 @@ input NavigatorSettingsInput {
 input NetworkHandlerConfigInput {
     id: ID!
     enabled: Boolean
-    authType: NetworkHandlerAuthType
+    authType: NetworkHandlerAuthType @deprecated # use properties
     userName: String
     password: String
-    key: String
+    key: String @deprecated # use secured properties
     savePassword: Boolean
     properties: Object
+    secureProperties: Object
 }
 
 # Configuration of particular connection. Used for new connection create. Includes auth info
@@ -399,6 +502,9 @@ input ConnectionConfig {
     # Properties
     properties: Object
 
+    # Keep-Alive interval
+    keepAliveInterval: Int
+
     # Template connection
     template: Boolean
     # Read-onyl connection
@@ -407,7 +513,9 @@ input ConnectionConfig {
     # User credentials
 
     saveCredentials: Boolean
+    sharedCredentials: Boolean
     authModelId: ID
+    selectedSecretId: ID @since(version: "23.3.5")
     credentials: Object
 
     # Map of provider properties (name/value)
@@ -426,6 +534,12 @@ input ConnectionConfig {
     # Direct user credentials
     userName: String #@deprecated
     userPassword: String #@deprecated
+
+    # Folder
+    folder: ID
+
+    # Configuration type
+    configurationType: DriverConfigurationType
 }
 
 ####################################################
@@ -435,6 +549,8 @@ input ConnectionConfig {
 extend type Query {
     # Returns server config
     serverConfig: ServerConfig!
+
+    productSettings: ProductSettings! @since(version: "24.0.1")
 
     # Returns session state ( initialize if not )
     sessionState: SessionInfo!
@@ -448,15 +564,18 @@ extend type Query {
     networkHandlers: [NetworkHandlerDescriptor!]!
 
     # List of user connections.
-    userConnections( id: ID ): [ ConnectionInfo! ]!
+    userConnections( projectId: ID, id: ID, projectIds: [ID!] ): [ ConnectionInfo! ]!
     # List of template connections.
-    templateConnections: [ ConnectionInfo! ]!
+    templateConnections( projectId: ID ): [ ConnectionInfo! ]!
 
-    # Return connection state
-    connectionState( id: ID! ): ConnectionInfo! @deprecated
+    # List of connection folders
+    connectionFolders( projectId: ID, path: ID ): [ ConnectionFolderInfo! ]!
 
     # Return connection info
-    connectionInfo( id: ID! ): ConnectionInfo!
+    connectionInfo( projectId: ID!, id: ID! ): ConnectionInfo!
+
+    # Return list of accessible user projects
+    listProjects: [ ProjectInfo! ]!
 
     readSessionLog(maxEntries: Int, clearEntries: Boolean): [ LogEntry! ]!
 }
@@ -469,7 +588,9 @@ extend type Mutation {
     closeSession: Boolean
 
     # Refreshes session on server and returns its state
-    touchSession: Boolean
+    touchSession: Boolean  @deprecated(reason: "use events to update session")
+    # Refreshes session on server and returns session state
+    updateSession: SessionInfo! @since(version: "24.0.0") @deprecated(reason: "use events to update session")
 
     # Refresh session connection list
     refreshSessionConnections: Boolean
@@ -478,46 +599,42 @@ extend type Mutation {
     changeSessionLanguage(locale: String): Boolean
 
     # Create new custom connection. Custom connections exist only within the current session.
-    createConnection( config: ConnectionConfig! ): ConnectionInfo!
+    createConnection( config: ConnectionConfig!, projectId: ID ): ConnectionInfo!
 
-    updateConnection( config: ConnectionConfig! ): ConnectionInfo!
+    updateConnection( config: ConnectionConfig!, projectId: ID ): ConnectionInfo!
 
-    deleteConnection( id: ID! ): Boolean!
+    deleteConnection( id: ID!, projectId: ID ): Boolean!
 
-    createConnectionFromTemplate( templateId: ID!, connectionName: String ): ConnectionInfo!
+    createConnectionFromTemplate( templateId: ID!, projectId: ID!, connectionName: String ): ConnectionInfo!
+
+    # Create new folder
+    createConnectionFolder(parentFolderPath: ID, folderName: String!, projectId: ID ): ConnectionFolderInfo!
+
+    deleteConnectionFolder( folderPath: ID!, projectId: ID ): Boolean!
 
     # Copies connection configuration from node
-    copyConnectionFromNode( nodePath: String!, config: ConnectionConfig ): ConnectionInfo!
+    copyConnectionFromNode( nodePath: String!, config: ConnectionConfig, projectId: ID ): ConnectionInfo!
 
     # Test connection configuration. Returns remote server version
-    testConnection( config: ConnectionConfig! ): ConnectionInfo!
+    testConnection( config: ConnectionConfig!, projectId: ID): ConnectionInfo!
 
     # Test connection configuration. Returns remote server version
     testNetworkHandler( config: NetworkHandlerConfigInput! ): NetworkEndpointInfo!
 
     # Initiate existing connection
-    initConnection( id: ID!, credentials: Object, networkCredentials: [NetworkHandlerConfigInput!], saveCredentials: Boolean ): ConnectionInfo!
+    initConnection( id: ID!, projectId: ID, credentials: Object, networkCredentials: [NetworkHandlerConfigInput!],
+        saveCredentials:Boolean, sharedCredentials: Boolean, selectedSecretId:String ): ConnectionInfo!
 
     # Disconnect from database
-    closeConnection( id: ID! ): ConnectionInfo!
+    closeConnection( id: ID!, projectId: ID ): ConnectionInfo!
 
     # Changes navigator settings for connection
-    setConnectionNavigatorSettings( id: ID!, settings: NavigatorSettingsInput!): ConnectionInfo!
+    setConnectionNavigatorSettings( id: ID!, projectId: ID, settings: NavigatorSettingsInput!): ConnectionInfo!
 
     #### Generic async functions
 
     asyncTaskCancel(id: String!): Boolean
 
     asyncTaskInfo(id: String!, removeOnFinish: Boolean!): AsyncTaskInfo!
-
-
-    #### Deprecated API
-
-    # Create connection from template. Use createConnection instead
-    openConnection( config: ConnectionConfig! ): ConnectionInfo! @deprecated
-
-    # Use asyncTaskInfo instead
-    asyncTaskStatus(id: String!): AsyncTaskInfo! @deprecated
-
 }
 

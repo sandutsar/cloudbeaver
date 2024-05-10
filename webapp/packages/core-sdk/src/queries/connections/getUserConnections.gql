@@ -1,11 +1,19 @@
 query getUserConnections(
-  $id: ID,
-  $includeOrigin: Boolean!,
-  $customIncludeOriginDetails: Boolean!,
-  $includeAuthProperties: Boolean!,
-  $customIncludeNetworkHandlerCredentials: Boolean!
+  $projectId: ID
+  $connectionId: ID
+  $projectIds: [ID!]
+  $includeOrigin: Boolean!
+  $customIncludeOriginDetails: Boolean!
+  $includeAuthProperties: Boolean!
+  $includeNetworkHandlersConfig: Boolean!
+  $includeCredentialsSaved: Boolean!
+  $includeAuthNeeded: Boolean!
+  $includeProperties: Boolean!
+  $includeProviderProperties: Boolean!
+  $includeSharedSecrets: Boolean!
+  $customIncludeOptions: Boolean!
 ) {
-  connections: userConnections(id: $id) {
+  connections: userConnections(projectId: $projectId, id: $connectionId, projectIds: $projectIds) {
     ...DatabaseConnection
   }
 }

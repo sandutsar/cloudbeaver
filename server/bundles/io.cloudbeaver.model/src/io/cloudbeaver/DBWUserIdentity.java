@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,10 @@
 package io.cloudbeaver;
 
 import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * User identity provided by auth provider.
@@ -27,9 +31,24 @@ public class DBWUserIdentity {
     @NotNull
     private final String displayName;
 
+    private final Map<String, String> metaParameters = new LinkedHashMap<>();
+    @Nullable
+    private String providedUserRole;
+    @Nullable
+    private String[] providedTeamIds;
+
     public DBWUserIdentity(@NotNull String id, @NotNull String displayName) {
+        this(id, displayName, Map.of());
+    }
+
+    public DBWUserIdentity(
+        @NotNull String id,
+        @NotNull String displayName,
+        @NotNull Map<String, String> metaParameters
+    ) {
         this.id = id;
         this.displayName = displayName;
+        this.metaParameters.putAll(metaParameters);
     }
 
     @NotNull
@@ -40,5 +59,36 @@ public class DBWUserIdentity {
     @NotNull
     public String getDisplayName() {
         return displayName;
+    }
+
+    @NotNull
+    public Map<String, String> getMetaParameters() {
+        return Map.copyOf(metaParameters);
+    }
+
+    public void setMetaParameter(@NotNull String name, @Nullable String value) {
+        if (value == null) {
+            metaParameters.remove(name);
+        } else {
+            metaParameters.put(name, value);
+        }
+    }
+
+    @Nullable
+    public String getProvidedUserRole() {
+        return providedUserRole;
+    }
+
+    public void setProvidedUserRole(@Nullable String providedUserRole) {
+        this.providedUserRole = providedUserRole;
+    }
+
+    @Nullable
+    public String[] getProvidedTeamIds() {
+        return providedTeamIds;
+    }
+
+    public void setProvidedTeamIds(@Nullable String[] providedTeamIds) {
+        this.providedTeamIds = providedTeamIds;
     }
 }

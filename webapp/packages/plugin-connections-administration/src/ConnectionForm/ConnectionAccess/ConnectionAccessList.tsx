@@ -1,85 +1,55 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useState } from 'react';
-import styled, { css } from 'reshadow';
 
-import type { RoleInfo } from '@cloudbeaver/core-authentication';
+import type { TeamInfo } from '@cloudbeaver/core-authentication';
 import {
-  Table,
-  TableBody,
-  TableItem,
-  TableColumnValue,
-  BASE_CONTAINERS_STYLES,
-  Group,
   Button,
-  useObjectRef,
   getComputed,
   getSelectedItems,
+  Group,
+  s,
+  Table,
+  TableBody,
+  TableColumnValue,
+  TableItem,
+  useObjectRef,
+  useS,
+  useTranslate,
 } from '@cloudbeaver/core-blocks';
-import { useTranslate } from '@cloudbeaver/core-localization';
 import type { AdminUserInfoFragment } from '@cloudbeaver/core-sdk';
-import { useStyles } from '@cloudbeaver/core-theming';
 
+import styles from './ConnectionAccessList.m.css';
 import { ConnectionAccessTableHeader, IFilterState } from './ConnectionAccessTableHeader/ConnectionAccessTableHeader';
 import { ConnectionAccessTableInnerHeader } from './ConnectionAccessTableHeader/ConnectionAccessTableInnerHeader';
 import { ConnectionAccessTableItem } from './ConnectionAccessTableItem';
-import { getFilteredRoles, getFilteredUsers } from './getFilteredSubjects';
-
-const styles = css`
-    Table {
-      composes: theme-background-surface theme-text-on-surface from global;
-    }
-    Group {
-      position: relative;
-    }
-    Group, container, table-container {
-      height: 100%;
-    }
-    container {
-      display: flex;
-      flex-direction: column;
-      width: 100%;
-    }
-    table-container {
-      overflow: auto;
-    }
-    ConnectionAccessTableHeader {
-      flex: 0 0 auto;
-    }
-  `;
+import { getFilteredTeams, getFilteredUsers } from './getFilteredSubjects';
 
 interface Props {
   userList: AdminUserInfoFragment[];
-  roleList: RoleInfo[];
+  teamList: TeamInfo[];
   grantedSubjects: string[];
   onGrant: (subjectIds: string[]) => void;
   disabled: boolean;
 }
 
-export const ConnectionAccessList = observer<Props>(function ConnectionAccessList({
-  userList,
-  roleList,
-  grantedSubjects,
-  onGrant,
-  disabled,
-}) {
+export const ConnectionAccessList = observer<Props>(function ConnectionAccessList({ userList, teamList, grantedSubjects, onGrant, disabled }) {
   const props = useObjectRef({ onGrant });
-  const style = useStyles(styles, BASE_CONTAINERS_STYLES);
   const translate = useTranslate();
+  const style = useS(styles);
   const [selectedSubjects] = useState<Map<any, boolean>>(() => observable(new Map()));
   const [filterState] = useState<IFilterState>(() => observable({ filterValue: '' }));
 
-  const roles = getFilteredRoles(roleList, filterState.filterValue);
+  const teams = getFilteredTeams(teamList, filterState.filterValue);
   const users = getFilteredUsers(userList, filterState.filterValue);
-  const keys = roles.map(role => role.roleId).concat(users.map(user => user.userId));
+  const keys = teams.map(team => team.teamId).concat(users.map(user => user.userId));
 
   const selected = getComputed(() => Array.from(selectedSubjects.values()).some(v => v));
 
@@ -88,14 +58,17 @@ export const ConnectionAccessList = observer<Props>(function ConnectionAccessLis
     selectedSubjects.clear();
   }, []);
 
-  return styled(style)(
-    <Group box medium overflow>
-      <container>
-        <ConnectionAccessTableHeader filterState={filterState} disabled={disabled}>
-          <Button disabled={disabled || !selected} mod={['unelevated']} onClick={grant}>{translate('ui_add')}</Button>
+  return (
+    <Group className={s(style, { group: true })} box medium overflow>
+      <div className={s(style, { container: true })}>
+        <ConnectionAccessTableHeader className={s(style, { connectionAccessTableHeader: true })} filterState={filterState} disabled={disabled}>
+          <Button disabled={disabled || !selected} mod={['unelevated']} onClick={grant}>
+            {translate('ui_add')}
+          </Button>
         </ConnectionAccessTableHeader>
-        <table-container>
+        <div className={s(style, { tableContainer: true })}>
           <Table
+            className={s(style, { table: true })}
             keys={keys}
             selectedItems={selectedSubjects}
             isItemSelectable={item => !grantedSubjects.includes(item)}
@@ -103,21 +76,19 @@ export const ConnectionAccessList = observer<Props>(function ConnectionAccessLis
             <ConnectionAccessTableInnerHeader disabled={disabled} />
             <TableBody>
               {!keys.length && filterState.filterValue && (
-                <TableItem item='tableInfo' selectDisabled>
-                  <TableColumnValue colSpan={5}>
-                    {translate('ui_search_no_result_placeholder')}
-                  </TableColumnValue>
+                <TableItem item="tableInfo" selectDisabled>
+                  <TableColumnValue colSpan={5}>{translate('ui_search_no_result_placeholder')}</TableColumnValue>
                 </TableItem>
               )}
-              {roles.map(role => (
+              {teams.map(team => (
                 <ConnectionAccessTableItem
-                  key={role.roleId}
-                  id={role.roleId}
-                  name={role.roleName || ''}
-                  tooltip={role.roleName}
-                  description={role.description}
-                  icon='/icons/role.svg'
-                  iconTooltip={translate('authentication_role_icon_tooltip')}
+                  key={team.teamId}
+                  id={team.teamId}
+                  name={team.teamName || team.teamId}
+                  tooltip={team.teamId}
+                  description={team.description}
+                  icon="/icons/team.svg"
+                  iconTooltip={translate('authentication_team_icon_tooltip')}
                   disabled={disabled}
                 />
               ))}
@@ -127,15 +98,15 @@ export const ConnectionAccessList = observer<Props>(function ConnectionAccessLis
                   id={user.userId}
                   name={user.userId}
                   tooltip={user.userId}
-                  icon='/icons/user.svg'
+                  icon="/icons/user.svg"
                   iconTooltip={translate('authentication_user_icon_tooltip')}
                   disabled={disabled}
                 />
               ))}
             </TableBody>
           </Table>
-        </table-container>
-      </container>
+        </div>
+      </div>
     </Group>
   );
 });

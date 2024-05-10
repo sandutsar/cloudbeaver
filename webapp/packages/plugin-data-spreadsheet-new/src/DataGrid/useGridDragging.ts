@@ -1,11 +1,10 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { useCallback, useEffect } from 'react';
 
 import { useObjectRef } from '@cloudbeaver/core-blocks';
@@ -23,7 +22,7 @@ interface IMousePosition {
 type DraggingCallback = (
   startPosition: IDraggingPosition,
   currentPosition: IDraggingPosition,
-  event: React.MouseEvent<HTMLDivElement, MouseEvent> | MouseEvent
+  event: React.MouseEvent<HTMLDivElement> | MouseEvent,
 ) => void;
 
 interface IDraggingState {
@@ -35,10 +34,7 @@ interface IDraggingState {
 }
 
 interface IDraggingCallbacks {
-  onDragStart?: (
-    startPosition: IDraggingPosition,
-    event: React.MouseEvent<HTMLDivElement, MouseEvent> | MouseEvent
-  ) => void;
+  onDragStart?: (startPosition: IDraggingPosition, event: React.MouseEvent<HTMLDivElement> | MouseEvent) => void;
   onDragOver?: DraggingCallback;
   onDragEnd?: DraggingCallback;
 }
@@ -56,7 +52,7 @@ function getDelta(startPosition: IMousePosition | null, currentPosition: IMouseP
   return Math.max(xDelta, yDelta);
 }
 
-function getCellPositionFromEvent(event: React.MouseEvent<HTMLDivElement, MouseEvent>) {
+function getCellPositionFromEvent(event: React.MouseEvent<HTMLDivElement>) {
   const target = event.target as HTMLElement;
   const cell = target.closest('[role="gridcell"]') as HTMLElement | null;
 
@@ -88,15 +84,18 @@ function isDraggingStarted(delta: number | null, threshold: number) {
 export function useGridDragging(props: IDraggingCallbacks) {
   const callbacks = useObjectRef(props);
 
-  const state = useObjectRef<IDraggingState>(() => ({
-    startDraggingCell: null,
-    currentDraggingCell: null,
-    startMousePosition: null,
-    dragging: false,
-    mouseDown: false,
-  }), false);
+  const state = useObjectRef<IDraggingState>(
+    () => ({
+      startDraggingCell: null,
+      currentDraggingCell: null,
+      startMousePosition: null,
+      dragging: false,
+      mouseDown: false,
+    }),
+    false,
+  );
 
-  const onMouseDownHandler = useCallback((event: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
+  const onMouseDownHandler = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const position = getCellPositionFromEvent(event);
 
     if (!position) {
@@ -108,7 +107,7 @@ export function useGridDragging(props: IDraggingCallbacks) {
     state.startDraggingCell = { colIdx: position.colIdx, rowIdx: position.rowIdx };
   }, []);
 
-  const onMouseMoveHandler = useCallback((event: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
+  const onMouseMoveHandler = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!state.mouseDown) {
       return;
     }
@@ -134,8 +133,7 @@ export function useGridDragging(props: IDraggingCallbacks) {
     }
 
     // check if the new cell is equal to the previous cell
-    if (position.rowIdx === state.currentDraggingCell?.rowIdx
-      && position.colIdx === state.currentDraggingCell.colIdx) {
+    if (position.rowIdx === state.currentDraggingCell?.rowIdx && position.colIdx === state.currentDraggingCell.colIdx) {
       return;
     }
 
@@ -151,11 +149,12 @@ export function useGridDragging(props: IDraggingCallbacks) {
           colIdx: position.colIdx,
           rowIdx: position.rowIdx,
         },
-        event);
+        event,
+      );
     }
   }, []);
 
-  const onMouseUpHandler = useCallback((event: React.MouseEvent<HTMLDivElement, MouseEvent> | MouseEvent) => {
+  const onMouseUpHandler = useCallback((event: React.MouseEvent<HTMLDivElement> | MouseEvent) => {
     state.mouseDown = false;
     state.startMousePosition = null;
 
@@ -173,7 +172,8 @@ export function useGridDragging(props: IDraggingCallbacks) {
           colIdx: state.currentDraggingCell.colIdx,
           rowIdx: state.currentDraggingCell.rowIdx,
         },
-        event);
+        event,
+      );
     }
 
     state.dragging = false;

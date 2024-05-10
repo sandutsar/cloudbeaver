@@ -1,29 +1,49 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { injectable } from '@cloudbeaver/core-di';
-import { PluginManagerService, PluginSettings } from '@cloudbeaver/core-plugin';
+import {
+  createSettingsAliasResolver,
+  ROOT_SETTINGS_LAYER,
+  SettingsProvider,
+  SettingsProviderService,
+  SettingsResolverService,
+} from '@cloudbeaver/core-settings';
+import { schema } from '@cloudbeaver/core-utils';
 
-import { themes } from './themes';
+import { DEFAULT_THEME_ID } from './themes';
 
-interface IDefaultSettings {
-  defaultTheme: string;
-}
+const settingsSchema = schema.object({
+  'core.theming.theme': schema.string().default(DEFAULT_THEME_ID),
+});
 
-export const defaultThemeSettings: IDefaultSettings = {
-  defaultTheme: themes[0].id,
-};
+export type IThemeSettings = schema.infer<typeof settingsSchema>;
 
 @injectable()
 export class ThemeSettingsService {
-  readonly settings: PluginSettings<IDefaultSettings>;
+  get theme(): string {
+    return this.settings.getValue('core.theming.theme');
+  }
+  readonly settings: SettingsProvider<typeof settingsSchema>;
 
-  constructor(private readonly pluginManagerService: PluginManagerService) {
-    this.settings = this.pluginManagerService.getPluginSettings('core.user', defaultThemeSettings);
+  constructor(
+    private readonly settingsProviderService: SettingsProviderService,
+    private readonly settingsResolverService: SettingsResolverService,
+  ) {
+    this.settings = this.settingsProviderService.createSettings(settingsSchema);
+
+    this.settingsResolverService.addResolver(
+      ROOT_SETTINGS_LAYER,
+      /** @deprecated Use settings instead, will be removed in 23.0.0 */
+      createSettingsAliasResolver(this.settingsResolverService, this.settings, { 'core.theming.theme': 'core.user.defaultTheme' }),
+      createSettingsAliasResolver(this.settingsResolverService, this.settings, {
+        'core.theming.theme': 'core.localization.defaultTheme',
+      }),
+      createSettingsAliasResolver(this.settingsResolverService, this.settings, { 'core.theming.theme': 'app.defaultTheme' }),
+    );
   }
 }

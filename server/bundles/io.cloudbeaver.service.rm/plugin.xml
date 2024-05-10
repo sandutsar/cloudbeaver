@@ -4,13 +4,29 @@
 <plugin>
 
     <extension point="io.cloudbeaver.service">
-        <service id="metadata" label="Resource management " description="Resource management  services" class="io.cloudbeaver.service.rm.WebServiceBindingRM">
+        <service id="resource.manager" label="Resource management " description="Resource management  services" class="io.cloudbeaver.service.rm.WebServiceBindingRM">
+            <permission id="project-resource-view" label="Resource View" description="Allow read only access to resources"
+                        category="resources" scope="project"/>
+            <permission id="project-resource-edit" label="Resource Edit" description="Allow write access to resources"
+                        category="resources" scope="project"/>
 
+            <permission id="project-datasource-view" label="Connection View" description="Allow view connections in the project"
+                        category="datasources" scope="project"/>
+            <permission id="project-datasource-edit" label="Connection Edit"
+                        description="Allow create/edit connections in the project"
+                        category="data-sources" scope="project"/>
+
+
+            <!--            <permission id="project-admin" label="Project Admin" description="Allow manage access to the project" category="general"-->
+<!--                        scope="project"/>-->
+
+<!--            <permission id="rm-admin" label="Resource Manager Admin" description="Allow create/delete projects, manage project access"-->
+<!--                        category="general" scope="subject"/>-->
         </service>
     </extension>
 
     <extension point="org.jkiss.dbeaver.navigator">
-        <extender id="rm" class="io.cloudbeaver.service.rm.RMNavigatorModelExtender"/>
+        <extender id="rm" root="true" class="io.cloudbeaver.service.rm.RMNavigatorModelExtender"/>
     </extension>
 
 </plugin>

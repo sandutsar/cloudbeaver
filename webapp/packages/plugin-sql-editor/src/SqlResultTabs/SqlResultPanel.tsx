@@ -1,26 +1,22 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
-
 import { observer } from 'mobx-react-lite';
-import styled, { css } from 'reshadow';
+import React from 'react';
+
+import { importLazyComponent } from '@cloudbeaver/core-blocks';
 
 import type { ISqlEditorTabState } from '../ISqlEditorTabState';
-import { SqlExecutionPlanPanel } from './ExecutionPlan/SqlExecutionPlanPanel';
-import { SqlResultSetPanel } from './SqlResultSetPanel';
-import { SqlScriptStatisticsPanel } from './SqlScriptStatisticsPanel';
+import classes from './SqlResultPanel.m.css';
 
-const style = css`
-  result-panel {
-    display: flex;
-    flex: 1;
-    overflow: auto;
-  }
-`;
+const SqlExecutionPlanPanel = importLazyComponent(() => import('./ExecutionPlan/SqlExecutionPlanPanel').then(module => module.SqlExecutionPlanPanel));
+const OutputLogsPanel = importLazyComponent(() => import('./OutputLogs/OutputLogsPanel').then(module => module.OutputLogsPanel));
+const SqlResultSetPanel = importLazyComponent(() => import('./SqlResultSetPanel').then(module => module.SqlResultSetPanel));
+const SqlScriptStatisticsPanel = importLazyComponent(() => import('./SqlScriptStatisticsPanel').then(module => module.SqlScriptStatisticsPanel));
 
 interface Props {
   state: ISqlEditorTabState;
@@ -31,32 +27,38 @@ export const SqlResultPanel = observer<Props>(function SqlResultPanel({ state, i
   const resultTab = state.resultTabs.find(tab => tab.tabId === id);
 
   if (resultTab) {
-    const group = state.resultGroups.find(group => group.groupId === resultTab.groupId)!;
-
-    return styled(style)(
-      <result-panel>
-        <SqlResultSetPanel resultTab={resultTab} group={group} />
-      </result-panel>
+    return (
+      <div className={classes.resultPanel}>
+        <SqlResultSetPanel resultTab={resultTab} state={state} />
+      </div>
     );
   }
 
   const executionPlanTab = state.executionPlanTabs.find(tab => tab.tabId === id);
 
   if (executionPlanTab) {
-    return styled(style)(
-      <result-panel>
+    return (
+      <div className={classes.resultPanel}>
         <SqlExecutionPlanPanel executionPlanTab={executionPlanTab} />
-      </result-panel>
+      </div>
     );
   }
 
   const statisticsTab = state.statisticsTabs.find(tab => tab.tabId === id);
 
   if (statisticsTab) {
-    return styled(style)(
-      <result-panel>
+    return (
+      <div className={classes.resultPanel}>
         <SqlScriptStatisticsPanel tab={statisticsTab} />
-      </result-panel>
+      </div>
+    );
+  }
+
+  if (state.outputLogsTab) {
+    return (
+      <div className={classes.resultPanel}>
+        <OutputLogsPanel sqlEditorTabState={state} />
+      </div>
     );
   }
 

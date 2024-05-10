@@ -1,26 +1,24 @@
 /*
  * CloudBeaver - Cloud Database Manager
- * Copyright (C) 2020-2022 DBeaver Corp and others
+ * Copyright (C) 2020-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0.
  * you may not use this file except in compliance with the License.
  */
+import React from 'react';
 
-import { injectable, Bootstrap } from '@cloudbeaver/core-di';
+import { Bootstrap, injectable } from '@cloudbeaver/core-di';
 
 import { CreateConnectionService } from '../CreateConnectionService';
-import { ConnectionManualService } from './Manual/ConnectionManualService';
-import { CustomConnection } from './Manual/CustomConnection';
-import { ConnectionSearchService } from './Search/ConnectionSearchService';
-import { SearchDatabase } from './Search/SearchDatabase';
+
+const CustomConnection = React.lazy(async () => {
+  const { CustomConnection } = await import('./Manual/CustomConnection');
+  return { default: CustomConnection };
+});
 
 @injectable()
 export class CreateConnectionBaseBootstrap extends Bootstrap {
-  constructor(
-    private readonly createConnectionService: CreateConnectionService,
-    private readonly connectionManualService: ConnectionManualService,
-    private readonly connectionSearchService: ConnectionSearchService
-  ) {
+  constructor(private readonly createConnectionService: CreateConnectionService) {
     super();
   }
 
@@ -31,20 +29,7 @@ export class CreateConnectionBaseBootstrap extends Bootstrap {
       order: 1,
       panel: () => CustomConnection,
     });
-    this.createConnectionService.tabsContainer.add({
-      key: 'search',
-      name: 'connections_connection_create_search_database',
-      order: 2,
-      panel: () => SearchDatabase,
-      onOpen: () => this.connectionSearchService.load(),
-      options: {
-        configurationWizard: {
-          activationPriority: 2,
-        },
-        close: () => this.connectionSearchService.close(),
-      },
-    });
   }
 
-  load(): void | Promise<void> { }
+  load(): void | Promise<void> {}
 }

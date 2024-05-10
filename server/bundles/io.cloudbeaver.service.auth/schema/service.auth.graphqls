@@ -4,6 +4,12 @@ enum AuthCredentialEncryption {
     hash
 }
 
+enum AuthStatus {
+    SUCCESS,
+    IN_PROGRESS,
+    ERROR
+}
+
 type AuthCredentialInfo {
     id: ID!
     displayName: String!
@@ -24,6 +30,7 @@ type AuthProviderConfiguration {
     id: ID!
     displayName: String!
     disabled: Boolean!
+    authRoleProvided: Boolean
 
     iconURL: String
     description: String
@@ -34,6 +41,7 @@ type AuthProviderConfiguration {
     signInLink: String
     signOutLink: String
     metadataLink: String
+    acsLink: String
 }
 
 type AuthProviderCredentialsProfile {
@@ -50,9 +58,14 @@ type AuthProviderInfo {
     description: String
 
     defaultProvider: Boolean!
+    trusted: Boolean!
+    private: Boolean!
+    supportProvisioning: Boolean!
 
     # Configurable providers must be configured first. See configurations field.
     configurable: Boolean!
+    # Federated providers means authorization must occur asynchronously through redirects.
+    federated: Boolean!
 
     # Provider configurations (applicable only if configurable=true)
     configurations: [AuthProviderConfiguration!]
@@ -60,10 +73,27 @@ type AuthProviderInfo {
     credentialProfiles: [AuthProviderCredentialsProfile!]!
 
     requiredFeatures: [String!]!
+
+    required: Boolean!
+}
+
+type AuthInfo {
+    redirectLink: String
+
+    authId: String
+
+    authStatus: AuthStatus!
+
+    userTokens: [UserAuthToken!]
+}
+
+
+type LogoutInfo @since(version: "23.3.3") {
+    redirectLinks: [String!]!
 }
 
 type UserAuthToken {
-    # Auth provider used for autgorization
+    # Auth provider used for authorization
     authProvider: ID!
 
     # Auth provider configuration ID
@@ -83,6 +113,7 @@ type UserAuthToken {
 
     # Auth origin
     origin: ObjectOrigin!
+
 }
 
 type UserInfo {
@@ -91,28 +122,36 @@ type UserInfo {
 
     # Human readable display name. It is taken from the first auth provider which was used for user login.
     displayName: String
+    # User auth role ID. Optional.
+    authRole: ID
 
+    # All authentication tokens used during current session
     authTokens: [UserAuthToken!]!
 
     linkedAuthProviders: [String!]!
 
     # User profile properties map
     metaParameters: Object!
-
-    # USer configuiraiton parameters
+    # User configuration parameters
     configurationParameters: Object!
+
 }
 
 extend type Query {
 
     # Authorize user using specified auth provider. If linkUser=true then associates new
-    authLogin(provider: ID!, configuration: ID, credentials: Object!, linkUser: Boolean): UserAuthToken!
+    # If forceSessionsLogout=true then kill another sessions
+    authLogin(provider: ID!, configuration: ID, credentials: Object, linkUser: Boolean, forceSessionsLogout: Boolean): AuthInfo!
+
+    authUpdateStatus(authId: ID!, linkUser: Boolean): AuthInfo!
 
     # Logouts user. If provider not specified then all authorizations are revoked from session.
+    @deprecated
     authLogout(provider: ID, configuration: ID): Boolean
 
-    # Tries to login using active federated session
-    tryFederatedLogin(provider: ID!): UserAuthToken!
+    # Same as #authLogout, but returns additional information
+    @since(version: "23.3.3")
+    authLogoutExtended(provider: ID, configuration: ID): LogoutInfo!
 
     # Active user information. null is no user was authorized within session
     activeUser: UserInfo
@@ -125,9 +164,12 @@ extend type Query {
 
 }
 
+
 extend type Mutation {
 
     # Set user config parameter. If parameter value is null then removes the parameter
     setUserConfigurationParameter(name: String!, value: Object): Boolean!
+    # Updates user preferences
+    setUserPreferences(preferences: Object!): UserInfo! @since(version: "24.0.1")
 
 }

@@ -1,6 +1,6 @@
 /*
  * DBeaver - Universal Database Manager
- * Copyright (C) 2010-2022 DBeaver Corp and others
+ * Copyright (C) 2010-2024 DBeaver Corp and others
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,13 @@
  */
 package io.cloudbeaver.service.navigator;
 
-import io.cloudbeaver.service.DBWService;
 import io.cloudbeaver.DBWebException;
 import io.cloudbeaver.WebAction;
 import io.cloudbeaver.model.WebConnectionInfo;
 import io.cloudbeaver.model.session.WebSession;
+import io.cloudbeaver.service.DBWService;
 import org.jkiss.code.NotNull;
+import org.jkiss.code.Nullable;
 
 import java.util.List;
 
@@ -44,18 +45,44 @@ public interface DBWServiceNavigator extends DBWService {
         String nodePath) throws DBWebException;
 
     @WebAction
-    WebNavigatorNodeInfo getNavigatorNodeInfo(@NotNull WebSession session, @NotNull String nodePath) throws DBWebException;
+    WebNavigatorNodeInfo getNavigatorNodeInfo(
+        @NotNull WebSession session,
+        @NotNull String nodePath) throws DBWebException;
 
     @WebAction
-    boolean refreshNavigatorNode(@NotNull WebSession session, @NotNull String nodePath) throws DBWebException;
+    boolean setNavigatorNodeFilter(
+        @NotNull WebSession webSession,
+        @NotNull String nodePath,
+        @Nullable List<String> include,
+        @Nullable List<String> exclude) throws DBWebException;
 
     @WebAction
-    WebStructContainers getStructContainers(WebConnectionInfo connectionInfo, String contextId, String catalog) throws DBWebException;
+    boolean refreshNavigatorNode(
+        @NotNull WebSession session,
+        @NotNull String nodePath) throws DBWebException;
 
     @WebAction
-    String renameNode(@NotNull WebSession session, @NotNull String nodePath, @NotNull String newName) throws DBWebException;
+    WebStructContainers getStructContainers(
+        String projectId,
+        WebConnectionInfo connectionInfo,
+        String contextId,
+        String catalog) throws DBWebException;
 
     @WebAction
-    int deleteNodes(@NotNull WebSession session, @NotNull List<String> nodePaths) throws DBWebException;
+    String renameNode(
+        @NotNull WebSession session,
+        @NotNull String nodePath,
+        @NotNull String newName) throws DBWebException;
+
+    @WebAction
+    int deleteNodes(
+        @NotNull WebSession session,
+        @NotNull List<String> nodePaths) throws DBWebException;
+
+    @WebAction
+    boolean moveNodesToFolder(
+        @NotNull WebSession session,
+        @NotNull List<String> nodePaths,
+        @NotNull String folderPath) throws DBWebException;
 
 }
